@@ -1,1 +1,64 @@
+# 律动舞蹈 · 车载音乐可视化 —— 云端自动打包
+#
+# 兼容 GitHub Actions 与自建 Gitea / Forgejo Actions（语法一致）
+#
+# 用法：
+#   1. 把 CarDanceVisualizer【文件夹内部的全部内容】上传到仓库根目录
+#      （即仓库根下直接是 .github/ app/ gradle/ settings.gradle.kts ...）
+#   2. 打开仓库页面 → Actions(行动) 标签
+#   3. 左侧点 "生成律动舞蹈 APK" → 右侧 Run workflow(运行工作流)
+#   4. 跑完（约 3–10 分钟）后，在当次运行页面底部 Artifacts(制品)
+#      下载 car-dance-apk，解压就是 app-debug.apk
+#
+# 产物路径：app/build/outputs/apk/debug/app-debug.apk
+# 触发条件：推送任意分支，或手动点 Run workflow
+#
+# 注意：本流程不依赖执行器是否预装 gradle 命令，改为显式下载 Gradle 8.2，
+#       因此在 GitHub / Gitea / Forgejo 上都能跑。
 
+name: 生成律动舞蹈 APK
+
+on:
+  push:
+    branches: [ main, master, '*' ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: 打包 Debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 配置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # 仓库未提交 gradle-wrapper.jar（二进制文件），这里显式下载 Gradle 8.2，
+      # 不假设执行器里已经有 gradle 命令。
+      - name: 安装 Gradle 8.2
+        run: |
+          set -e
+          mkdir -p "$HOME/.gradle-dist"
+          cd "$HOME/.gradle-dist"
+          curl -fsSL -o gradle.zip https://services.gradle.org/distributions/gradle-8.2-bin.zip
+          unzip -q gradle.zip
+          echo "$HOME/.gradle-dist/gradle-8.2/bin" >> "$GITHUB_PATH"
+
+      - name: 校验 Gradle
+        run: gradle --version
+
+      - name: 编译 APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: car-dance-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
