@@ -25,7 +25,21 @@ RUN_ID = sys.argv[2] if len(sys.argv) > 2 else ""
 OUT = pathlib.Path(sys.argv[3] if len(sys.argv) > 3 else "app-debug.apk")
 
 # No proxy for github: the sandbox proxy 502s on it.
-OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+#
+# The artifact download redirects to a signed blob URL. The Authorization
+# header must NOT be forwarded there or the blob store answers 401, so the
+# redirect handler strips it.
+class NoAuthRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.remove_header("Authorization")
+        return new
+
+
+OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), NoAuthRedirect()
+)
 
 
 def api(path):

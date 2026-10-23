@@ -103,18 +103,18 @@ object Kinematics {
     private const val TORSO = 0.272f
     // Chest -> centre of the head. Long enough that a real neck shows between
     // the collarbones and the chin (about a quarter of a head height).
-    private const val NECK = 0.092f
-    private const val HEAD_R = 0.064f
-    private const val UPPER_ARM = 0.152f
-    private const val FOREARM = 0.142f
-    private const val THIGH = 0.258f
-    private const val SHIN = 0.252f
-    private const val FOOT = 0.052f
-    private const val SHOULDER_HALF = 0.094f
-    private const val CHEST_HALF = 0.083f
-    private const val HIP_HALF = 0.092f
+    private const val NECK = 0.082f
+    private const val HEAD_R = 0.072f
+    private const val UPPER_ARM = 0.140f
+    private const val FOREARM = 0.130f
+    private const val THIGH = 0.238f
+    private const val SHIN = 0.234f
+    private const val FOOT = 0.050f
+    private const val SHOULDER_HALF = 0.088f
+    private const val CHEST_HALF = 0.076f
+    private const val HIP_HALF = 0.086f
     // Narrower than both chest and hips -> a defined waist.
-    private const val WAIST_HALF = 0.055f
+    private const val WAIST_HALF = 0.058f
 
     fun point(from: PointF, length: Float, angleDeg: Float): PointF {
         val a = angleDeg * DEG_TO_RAD
@@ -137,7 +137,6 @@ object Kinematics {
 
         val neck = point(chest, NECK * h * 0.20f, up + pose.headTilt)
         val head = point(chest, NECK * h, up + pose.headTilt)
-
         val elbowL = point(shoulderL, UPPER_ARM * h, pose.shoulderL)
         val handL = point(elbowL, FOREARM * h, pose.elbowL)
         val elbowR = point(shoulderR, UPPER_ARM * h, pose.shoulderR)
