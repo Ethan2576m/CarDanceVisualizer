@@ -152,6 +152,18 @@ REQUIRED_IMPORTS = {
     ],
 }
 
+# Path factory methods that always need an explicit Path.Direction argument.
+# addArc() is the one that does not.
+NEEDS_DIRECTION = ("addOval", "addRect", "addRoundRect", "addCircle")
+
+
+def check_api_usage(path: pathlib.Path, code: str) -> None:
+    for m in re.finditer(r"\.(" + "|".join(NEEDS_DIRECTION) + r")\(([^()]*)\)", code):
+        if "Direction" not in m.group(2):
+            errors.append(
+                f"{path.name}: {m.group(1)}() 缺少 Path.Direction 参数（Android 无单参重载）"
+            )
+
 
 def main() -> int:
     global checked
@@ -171,6 +183,7 @@ def main() -> int:
         check_package(path, raw)
         check_members(path, code, "dancer", dancer_members)
         check_members(path, code, "fig", figure_members)
+        check_api_usage(path, code)
         for imp in REQUIRED_IMPORTS.get(path.name, []):
             if f"import {imp}" not in raw:
                 errors.append(f"{path.name}: 缺少 import {imp}")

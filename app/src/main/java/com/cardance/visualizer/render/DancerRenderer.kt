@@ -300,7 +300,7 @@ class DancerRenderer {
         // Skull contour.
         rect.set(fig.head.x - r * 0.90f, fig.head.y - r, fig.head.x + r * 0.90f, fig.head.y + r)
         p.reset()
-        p.addOval(rect)
+        p.addOval(rect, Path.Direction.CW)
         neonHot(canvas, p, h * 0.0175f, 228)
 
         // Crown parting.
