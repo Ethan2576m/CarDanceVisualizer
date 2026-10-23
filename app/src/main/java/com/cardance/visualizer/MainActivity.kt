@@ -8,6 +8,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -50,11 +52,45 @@ class MainActivity : AppCompatActivity() {
         stage = StageView(this).apply {
             audioTap = tap
             danceMode = DanceMode.RANDOM
-            setOnClickListener { cycleMode() }
-            setOnLongClickListener { openTrackPicker(); true }
+            // 手势统一交给 GestureDetector：单击切律动模式 / 双击开关演示模式 / 长按选音乐
+            val detector = GestureDetector(
+                this@MainActivity,
+                object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onDown(e: MotionEvent): Boolean = true
+
+                    override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                        cycleMode()
+                        return true
+                    }
+
+                    override fun onDoubleTap(e: MotionEvent): Boolean {
+                        toggleDemoMode()
+                        return true
+                    }
+
+                    override fun onLongPress(e: MotionEvent) {
+                        openTrackPicker()
+                    }
+                }
+            )
+            setOnTouchListener { v, event ->
+                detector.onTouchEvent(event)
+                if (event.actionMasked == MotionEvent.ACTION_UP) v.performClick()
+                true
+            }
+            isClickable = true
         }
         setContentView(stage)
         startTap()
+    }
+
+    private fun toggleDemoMode() {
+        stage.demoMode = !stage.demoMode
+        Toast.makeText(
+            this,
+            if (stage.demoMode) "演示模式：合成节拍，无需音频" else "演示模式已关闭，回到音频跟随",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun cycleMode() {

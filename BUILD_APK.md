@@ -87,14 +87,51 @@ gradlew.bat assembleDebug        # Windows
 
 ---
 
-## 免装环境：用 GitHub Actions 云端打包（推荐）
+## 免装环境：用云端自动打包（推荐）
 
 配置文件已经放好在仓库里：`.github/workflows/build-apk.yml`
+兼容 **GitHub Actions** 与自建 **Gitea / Forgejo Actions**，语法一致。
+
+### 0. 目录结构（最容易踩的坑）
+
+上传后，仓库**根目录**必须长这样 —— 不要再多套一层 `CarDanceVisualizer/`：
+
+```
+仓库根目录/
+├── .github/
+│   └── workflows/build-apk.yml      ← 必须在这一层
+├── app/
+│   ├── build.gradle.kts
+│   ├── proguard-rules.pro
+│   └── src/main/...
+├── gradle/
+│   └── wrapper/gradle-wrapper.properties
+├── build.gradle.kts
+├── settings.gradle.kts              ← 必须在这一层
+├── gradle.properties
+├── .gitignore
+├── BUILD_APK.md
+└── README.md
+```
+
+❌ 错误示例（多套一层，工作流不会触发、Gradle 找不到工程）：
+
+```
+仓库根目录/
+└── CarDanceVisualizer/    ← 多出来的这一层要去掉
+    ├── .github/
+    ├── app/
+    └── settings.gradle.kts
+```
+
+**网页上传时**：先在本地**进入** `CarDanceVisualizer` 文件夹，**Ctrl+A 全选里面的内容**，拖到仓库根上传；不要直接拖外层文件夹。
 
 ### 操作步骤
 
-1. 在 GitHub 新建一个仓库（Public / Private 都可以）。
-2. 把 `CarDanceVisualizer` 整个文件夹推上去：
+1. 新建一个仓库（Public / Private 都可以）。
+2. 把 `CarDanceVisualizer` **文件夹内部的内容**传上去。
+
+   命令行方式：
 
 ```bash
 cd CarDanceVisualizer
@@ -102,14 +139,17 @@ git init
 git add .
 git commit -m "车载律动舞蹈可视化"
 git branch -M main
-git remote add origin https://github.com/你的账号/你的仓库.git
+git remote add origin https://你的代码平台/你的账号/你的仓库.git
 git push -u origin main
 ```
 
-3. 打开仓库页面 → 点 **Actions** 标签。
-4. 左侧选 **生成律动舞蹈 APK** → 右侧点 **Run workflow**。
-5. 等待运行结束（首次约 3–8 分钟）。
-6. 在该次运行页面最底部 **Artifacts** 区域，下载 `律动舞蹈-APK`，解压即得 `app-debug.apk`。
+3. 打开仓库页面 → 点 **Actions / 行动** 标签。
+4. 左侧选 **生成律动舞蹈 APK** → 右侧点 **Run workflow / 运行工作流**。
+5. 等待运行结束（首次约 3–10 分钟，要下载 Gradle + Android SDK 依赖）。
+6. 在该次运行页面最底部 **Artifacts / 制品** 区域，下载 `car-dance-apk`，解压即得 `app-debug.apk`。
+
+> 流程里已显式下载 Gradle 8.2，不依赖执行器是否预装 `gradle` 命令。
+> 若你用的是自建服务，需保证执行器能访问外网（要拉 services.gradle.org 和 Maven 仓库）。
 
 ### 产物路径
 
@@ -117,11 +157,14 @@ git push -u origin main
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
+### 常见失败原因
+
+| 现象 | 原因 | 解决 |
+|---|---|---|
+| Actions 里看不到工作流 | `.github/workflows/` 不在仓库根 | 按上面「目录结构」去掉多套的一层 |
+| 报 "Task 'assembleDebug' not found" | `settings.gradle.kts` 不在根目录 / `app` 模块没传全 | 确认根目录有 `settings.gradle.kts` 和 `app/build.gradle.kts` |
+| 卡在下载 Gradle | 自建服务访问不了外网 | 换 GitHub，或在执行器机器上预装 Gradle 8.2 到 PATH |
+| 编译报 SDK 相关错误 | Android SDK 由 AGP 自动下载，需外网 | 同上，或改用本地 Android Studio 构建 |
+
 > Debug 版 APK 可直接装车机使用（需在车机设置里允许「未知来源」）。
 > 以后若要做正式分发版，再补签名配置即可，不用改业务代码。
-
----
-
-## 如果你不想装 Android Studio
-
-我可以帮你写一份 **GitHub Actions 自动打包配置**：把代码推到 GitHub，云端自动编译，产出一个可直接下载的 APK 链接。适合不想在本地装几个 GB 开发环境的情况。需要的话告诉我。

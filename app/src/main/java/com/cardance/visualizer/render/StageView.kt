@@ -11,6 +11,7 @@ import android.util.AttributeSet
 import android.view.Choreographer
 import android.view.View
 import com.cardance.visualizer.audio.AudioTap
+import com.cardance.visualizer.audio.DemoRhythm
 import com.cardance.visualizer.audio.RawFrame
 import com.cardance.visualizer.audio.Rhythm
 import com.cardance.visualizer.dance.DanceMode
@@ -40,8 +41,16 @@ class StageView @JvmOverloads constructor(
     var danceMode: DanceMode = DanceMode.RANDOM
     var sourceLabel: String = "蓝牙混音"
 
+    /**
+     * 演示模式：不依赖任何音频采集，用合成节拍驱动舞者。
+     * 用于模拟器、展厅待机、以及"采不到音频"时的兜底展示。
+     */
+    var demoMode: Boolean = false
+
     private val renderer = DancerRenderer()
     private val rnd = Random(System.currentTimeMillis())
+    private val demoRhythm = DemoRhythm()
+    private var lastRhythm: Rhythm = Rhythm()
 
     private val dancers = listOf(
         Dancer(
@@ -120,16 +129,28 @@ class StageView @JvmOverloads constructor(
         timeSec += dt
 
         val tapReady = ::audioTap.isInitialized
-        val rhythm = if (tapReady) audioTap.rhythm else idleRhythm
+        val rhythm: Rhythm
+        val beatSource: Long
 
-        if (tapReady) {
-            val beats = audioTap.beatCount
-            if (beats != lastBeatSeen) {
-                val fresh = min((beats - lastBeatSeen).toInt(), 4)
-                lastBeatSeen = beats
-                repeat(fresh) {
-                    dancers.forEach { it.onBeat(danceMode, rnd) }
-                }
+        if (demoMode) {
+            // 演示模式：合成节拍，不看真实采集
+            val demo = demoRhythm.update(dt)
+            rhythm = demo
+            beatSource = demoRhythm.beatCount
+        } else if (tapReady) {
+            rhythm = audioTap.rhythm
+            beatSource = audioTap.beatCount
+        } else {
+            rhythm = idleRhythm
+            beatSource = 0L
+        }
+        lastRhythm = rhythm
+
+        if (beatSource != lastBeatSeen) {
+            val fresh = min((beatSource - lastBeatSeen).toInt(), 4)
+            lastBeatSeen = beatSource
+            repeat(fresh) {
+                dancers.forEach { it.onBeat(danceMode, rnd) }
             }
         }
 
@@ -147,7 +168,7 @@ class StageView @JvmOverloads constructor(
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
 
-        val rhythm = if (::audioTap.isInitialized) audioTap.rhythm else idleRhythm
+        val rhythm = lastRhythm
 
         canvas.drawColor(Color.parseColor(BG_HEX))
         drawAmbientGlow(canvas, w, h, rhythm)
@@ -228,11 +249,12 @@ class StageView @JvmOverloads constructor(
 
     private fun drawHud(canvas: Canvas, w: Float, h: Float, rhythm: Rhythm) {
         val pad = 36f
-        canvas.drawText("音源 · $sourceLabel", pad, pad + 34f, strongTextPaint)
+        val srcText = if (demoMode) "演示模式 · 合成节拍" else "音源 · $sourceLabel"
+        canvas.drawText(srcText, pad, pad + 34f, strongTextPaint)
 
         val bpm = rhythm.bpm
         val bpmText = if (bpm > 0f) "BPM ${bpm.toInt()}" else "BPM --"
-        val modeText = danceMode.label
+        val modeText = if (demoMode) "演示" else danceMode.label
         canvas.drawText("$bpmText   ·   $modeText", pad, pad + 74f, textPaint)
 
         if (rhythm.chorus) {
@@ -250,10 +272,19 @@ class StageView @JvmOverloads constructor(
             canvas.drawText(label, left + 20f, top + 31f, strongTextPaint)
         }
 
+        // 右下角提示当前可用的手势
+        val hint = if (demoMode) {
+            "双击关闭演示 · 长按选择音乐"
+        } else {
+            "双击演示模式 · 长按选择音乐"
+        }
+        val hw = textPaint.measureText(hint)
+        canvas.drawText(hint, w - hw - pad, h - pad, textPaint)
+
         val tapReady = ::audioTap.isInitialized
         val deadTap = tapReady && audioTap.silentSeconds >= SILENCE_WARN_SECONDS
-        if (!tapReady || deadTap) {
-            val msg = "未检测到音频 · 点按切换模式，长按选择本地音乐"
+        if (!demoMode && (!tapReady || deadTap)) {
+            val msg = "未检测到音频 · 点按切换模式，双击开演示模式"
             canvas.drawText(msg, pad, h - pad, textPaint)
         }
     }
