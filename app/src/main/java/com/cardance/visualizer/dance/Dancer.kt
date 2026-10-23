@@ -46,6 +46,16 @@ class Dancer(
     var bounceRatio: Float = 0f
         private set
 
+    /**
+     * Live music energy, 0..1.
+     *
+     * The renderer uses it to open the gap between the double contour lines and
+     * to widen the hair ripple, so the drawing itself gets more intense when
+     * the track does - not just the colour.
+     */
+    var energy: Float = 0f
+        private set
+
     /** Live scale multiplier, including chorus growth. */
     var scaleNow: Float = baseScale
         private set
@@ -83,6 +93,12 @@ class Dancer(
         val beatBob = rhythm.beatPulse * BEAT_BOB
         val idleBob = (sin(timeSec * 2.1f + phase) * 0.5f + 0.5f) * IDLE_BOB
         bounceRatio = approach(bounceRatio, beatBob + idleBob, 0.22f)
+
+        energy = approach(
+            energy,
+            (intensity * 0.72f + rhythm.beatPulse * 0.38f).coerceIn(0f, 1f),
+            0.16f
+        )
 
         val targetSway = sin(timeSec * 1.35f + phase) * IDLE_SWAY +
             rhythm.beatPulse * IDLE_SWAY * 0.8f
