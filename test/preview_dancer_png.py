@@ -98,21 +98,23 @@ def main():
     def col(y):
         return ramp((y - y0) / (y1 - y0))
 
-    for dpath, width, opacity, hot in shapes:
+    for dpath, width, opacity, bloom, hot in shapes:
         polys = parse_path(dpath)
         sw = max(1, int(width * SCALE))
-        # bloom
-        for poly in polys:
-            pts = [((x + ox) * SCALE, (y + oy) * SCALE) for x, y in poly]
-            if len(pts) < 2:
-                continue
-            c = col(oy + sum(p[1] for p in poly) / len(poly) - oy)
-            gd.line(pts, fill=(c[0], c[1], c[2], int(70 * opacity)), width=int(sw * 2.9), joint="curve")
-        glow = glow.filter(ImageFilter.GaussianBlur(radius=4 * SCALE))
-        img = Image.alpha_composite(img.convert("RGBA"), glow).convert("RGB")
-        glow = Image.new("RGBA", (W * SCALE, H * SCALE), (0, 0, 0, 0))
-        gd = ImageDraw.Draw(glow)
-        d = ImageDraw.Draw(img)
+        # bloom - only on contour/structure tiers, so folds and hair stay
+        # crisp ink lines instead of everything glowing equally
+        if bloom:
+            for poly in polys:
+                pts = [((x + ox) * SCALE, (y + oy) * SCALE) for x, y in poly]
+                if len(pts) < 2:
+                    continue
+                c = col(oy + sum(p[1] for p in poly) / len(poly) - oy)
+                gd.line(pts, fill=(c[0], c[1], c[2], int(70 * opacity)), width=int(sw * 2.9), joint="curve")
+            glow = glow.filter(ImageFilter.GaussianBlur(radius=4 * SCALE))
+            img = Image.alpha_composite(img.convert("RGBA"), glow).convert("RGB")
+            glow = Image.new("RGBA", (W * SCALE, H * SCALE), (0, 0, 0, 0))
+            gd = ImageDraw.Draw(glow)
+            d = ImageDraw.Draw(img)
 
         # crisp filament, coloured per segment so the ramp runs down the body
         for poly in polys:
