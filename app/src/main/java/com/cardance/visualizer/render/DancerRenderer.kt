@@ -7,7 +7,6 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
-import android.graphics.RectF
 import android.graphics.Shader
 import com.cardance.visualizer.dance.Dancer
 import com.cardance.visualizer.dance.Figure
@@ -17,20 +16,20 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Draws one dancer as **neon line art**.
+ * Draws one dancer as **neon line art of a real young woman**.
  *
- * The body is not a solid silhouette any more. Every part is built from thin
- * glowing contours, the way a light-painting photograph reads on a black stage:
+ * Earlier revisions were abstract silhouettes: a filled torso, a round head,
+ * straight limbs. This version is built from anatomy instead:
  *
- * - the torso is a closed contour instead of a filled shape;
- * - limbs are *ribbons* - two parallel edges with a visible gap between them;
- * - the inside of the body carries structure lines (spine, ribs, waist, hip);
- * - the hair is many independent strands, each with its own phase, so it
- *   ripples instead of moving as one sheet;
- * - one or two ghost contours trail behind the body as motion echoes.
+ * - a face with a tapered chin, brow, almond eyes, a nose and lips;
+ * - a neck, collarbones and a neckline;
+ * - a torso that actually has a bust line, a waist and a hip;
+ * - arms and legs drawn as tapered contours with a slight curve, not sticks;
+ * - a short flared skirt, because a dancer's silhouette is half the costume;
+ * - hair that follows the skull and falls in many independent strands.
  *
- * That is a lot more line work than a filled silhouette needs, which is the
- * point: on a car screen the *drawing* has to carry the read, not the colour.
+ * The look is still neon: the drawing is carried by thin glowing contours on
+ * a black stage rather than by solid fills.
  *
  * Bloom is faked with a wide low-alpha stroke under the filament, because a
  * hardware canvas ignores `setShadowLayer` on shapes.
@@ -52,8 +51,10 @@ class DancerRenderer {
     }
 
     private val p = Path()
-    private val rect = RectF()
     private val mtx = Matrix()
+
+    /** Global brightness multiplier - other dancers dim while one performs. */
+    private var alphaScale = 1f
 
     fun draw(
         canvas: Canvas,
@@ -67,19 +68,21 @@ class DancerRenderer {
         val h = heightPx
         if (h <= 2f) return
 
+        alphaScale = dancer.dim
         buildShader(dancer, h, timeSec)
 
         canvas.save()
         canvas.translate(originX, originY)
 
-        drawEchoes(canvas, fig, dancer, h)
-        drawHair(canvas, fig, dancer, h, timeSec, BACK)
+        drawEcho(canvas, fig, dancer, h)
+        drawHairBack(canvas, fig, dancer, h, timeSec)
         drawLegs(canvas, fig, dancer, h)
-        drawArms(canvas, fig, dancer, h)
+        drawSkirt(canvas, fig, h)
         drawTorso(canvas, fig, h)
-        drawTorsoLines(canvas, fig, dancer, h)
+        drawArms(canvas, fig, dancer, h)
         drawHead(canvas, fig, h)
-        drawHair(canvas, fig, dancer, h, timeSec, FRONT)
+        drawFace(canvas, fig, h)
+        drawHairFront(canvas, fig, dancer, h, timeSec)
 
         canvas.restore()
     }
@@ -103,10 +106,9 @@ class DancerRenderer {
         )
         val positions = floatArrayOf(0f, 0.20f, 0.42f, 0.62f, 0.82f, 1f)
         val shader = LinearGradient(
-            0f, -h * 0.66f, 0f, h * 0.60f,
+            0f, -h * 0.62f, 0f, h * 0.60f,
             colors, positions, Shader.TileMode.MIRROR
         )
-        // Scroll the ramp down the figure so the colour keeps moving.
         val scroll = (timeSec * h * 0.055f) % (h * 1.10f)
         mtx.setTranslate(0f, scroll)
         shader.setLocalMatrix(mtx)
@@ -115,15 +117,11 @@ class DancerRenderer {
 
     // ------------------------------------------------------------ primitives
 
-    /** Wide soft halo + mid glow + crisp filament. */
+    /** Wide soft halo + crisp filament. */
     private fun neon(canvas: Canvas, path: Path, w: Float, alpha: Int) {
-        val a = alpha.coerceIn(0, 255)
-        stroke.alpha = (a * 0.15f).toInt().coerceIn(0, 255)
-        stroke.strokeWidth = w * 3.0f
-        canvas.drawPath(path, stroke)
-
-        stroke.alpha = (a * 0.34f).toInt().coerceIn(0, 255)
-        stroke.strokeWidth = w * 1.70f
+        val a = (alpha * alphaScale).toInt().coerceIn(0, 255)
+        stroke.alpha = (a * 0.16f).toInt().coerceIn(0, 255)
+        stroke.strokeWidth = w * 2.9f
         canvas.drawPath(path, stroke)
 
         stroke.alpha = a
@@ -135,218 +133,444 @@ class DancerRenderer {
     private fun neonHot(canvas: Canvas, path: Path, w: Float, alpha: Int) {
         neon(canvas, path, w, alpha)
         filament.color = Color.WHITE
-        filament.alpha = (alpha.coerceIn(0, 255) * 0.42f).toInt().coerceIn(0, 255)
-        filament.strokeWidth = w * 0.40f
+        filament.alpha = (alpha * alphaScale * 0.40f).toInt().coerceIn(0, 255)
+        filament.strokeWidth = w * 0.38f
         canvas.drawPath(path, filament)
     }
 
-    /** Single pass, no bloom - cheap enough for the ghost trails. */
-    private fun flat(canvas: Canvas, path: Path, w: Float, alpha: Int) {
-        stroke.alpha = alpha.coerceIn(0, 255)
+    /** Single pass, no bloom - for the very fine detail lines. */
+    private fun fine(canvas: Canvas, path: Path, w: Float, alpha: Int) {
+        stroke.alpha = (alpha * alphaScale).toInt().coerceIn(0, 255)
         stroke.strokeWidth = w
         canvas.drawPath(path, stroke)
     }
 
+    private fun unit(x: Float, y: Float): Pair<Float, Float> {
+        val l = sqrt(x * x + y * y)
+        return if (l < 0.0001f) Pair(0f, 0f) else Pair(x / l, y / l)
+    }
+
+    // ------------------------------------------------------------- geometry
+
     /**
-     * A limb drawn as a narrow ribbon: the two long edges of the limb, with
-     * the dark stage showing through the middle.
+     * One edge of a tapered limb. [a] - [b] - [c] are the joints, the widths
+     * are the half-widths at each joint, and [bend] pushes the middle of the
+     * curve outwards so the limb reads as flesh rather than as a stick.
      */
-    private fun ribbon(a: PointF, b: PointF, c: PointF, w: Float): Path {
-        val d1x = b.x - a.x
-        val d1y = b.y - a.y
-        val l1 = sqrt(d1x * d1x + d1y * d1y).coerceAtLeast(0.0001f)
-        val p1x = -d1y / l1
-        val p1y = d1x / l1
+    private fun edgePath(
+        a: PointF,
+        b: PointF,
+        c: PointF,
+        wa: Float,
+        wb: Float,
+        wc: Float,
+        bend: Float,
+        sign: Float
+    ): Path {
+        val (u1x, u1y) = unit(b.x - a.x, b.y - a.y)
+        val n1x = -u1y
+        val n1y = u1x
+        val (u2x, u2y) = unit(c.x - b.x, c.y - b.y)
+        val n2x = -u2y
+        val n2y = u2x
 
-        val d2x = c.x - b.x
-        val d2y = c.y - b.y
-        val l2 = sqrt(d2x * d2x + d2y * d2y).coerceAtLeast(0.0001f)
-        val p2x = -d2y / l2
-        val p2y = d2x / l2
+        var bx = n1x + n2x
+        var by = n1y + n2y
+        val bl = sqrt(bx * bx + by * by)
+        if (bl > 0.0001f) {
+            bx /= bl
+            by /= bl
+        } else {
+            bx = n1x
+            by = n1y
+        }
+
+        val ax = a.x + n1x * wa * sign
+        val ay = a.y + n1y * wa * sign
+        val jx = b.x + bx * wb * sign
+        val jy = b.y + by * wb * sign
+        val cx = c.x + n2x * wc * sign
+        val cy = c.y + n2y * wc * sign
 
         p.reset()
-        p.moveTo(a.x + p1x * w, a.y + p1y * w)
-        p.quadTo(b.x + p1x * w, b.y + p1y * w, c.x + p2x * w, c.y + p2y * w)
-        p.quadTo(c.x - p2x * w, c.y - p2y * w, b.x - p1x * w, b.y - p1y * w)
-        p.quadTo(a.x - p1x * w, a.y - p1y * w, a.x + p1x * w, a.y + p1y * w)
-        p.close()
+        p.moveTo(ax, ay)
+        val m1x = (ax + jx) * 0.5f
+        val m1y = (ay + jy) * 0.5f
+        p.quadTo(m1x + bx * bend, m1y + by * bend, jx, jy)
+        val m2x = (jx + cx) * 0.5f
+        val m2y = (jy + cy) * 0.5f
+        p.quadTo(m2x + bx * bend, m2y + by * bend, cx, cy)
         return p
     }
 
-    private fun circle(at: PointF, r: Float): Path {
-        p.reset()
-        p.addCircle(at.x, at.y, r, Path.Direction.CW)
-        return p
-    }
-
-    // ----------------------------------------------------------------- body
-
-    private fun torsoPath(fig: Figure): Path {
-        val waistY = lerp(fig.pelvis.y, fig.chest.y, 0.55f)
-        val waistLx = fig.pelvis.x - fig.waistHalf
-        val waistRx = fig.pelvis.x + fig.waistHalf
-
-        p.reset()
-        p.moveTo(fig.hipL.x, fig.hipL.y)
-        p.quadTo(waistLx, waistY, fig.shoulderL.x, fig.shoulderL.y)
-        p.quadTo(
-            fig.chest.x,
-            fig.chest.y - fig.headRadius * 0.16f,
-            fig.shoulderR.x,
-            fig.shoulderR.y
-        )
-        p.quadTo(waistRx, waistY, fig.hipR.x, fig.hipR.y)
-        p.quadTo(fig.pelvis.x, fig.pelvis.y + fig.hipHalf * 0.42f, fig.hipL.x, fig.hipL.y)
-        p.close()
-        return p
-    }
+    // ---------------------------------------------------------------- torso
 
     private fun drawTorso(canvas: Canvas, fig: Figure, h: Float) {
-        neonHot(canvas, torsoPath(fig), h * 0.0195f, 235)
+        val (rx, ry) = unit(fig.shoulderR.x - fig.shoulderL.x, fig.shoulderR.y - fig.shoulderL.y)
+        val (ux, uy) = unit(fig.chest.x - fig.pelvis.x, fig.chest.y - fig.pelvis.y)
+        val downY = -uy
+
+        val baseX = fig.pelvis.x + (fig.chest.x - fig.pelvis.x) * 0.50f
+        val baseY = fig.pelvis.y + (fig.chest.y - fig.pelvis.y) * 0.50f
+
+        val chestRx = fig.chest.x + rx * fig.chestHalf
+        val chestRy = fig.chest.y + ry * fig.chestHalf
+        val chestLx = fig.chest.x - rx * fig.chestHalf
+        val chestLy = fig.chest.y - ry * fig.chestHalf
+        val waistRx = baseX + rx * fig.waistHalf
+        val waistRy = baseY + ry * fig.waistHalf
+        val waistLx = baseX - rx * fig.waistHalf
+        val waistLy = baseY - ry * fig.waistHalf
+
+        val bust = fig.chestHalf * 0.32f
+        val w = h * 0.0165f
+
+        // Right side of the body: shoulder -> bust -> waist -> hip.
+        p.reset()
+        p.moveTo(fig.shoulderR.x, fig.shoulderR.y)
+        p.quadTo(
+            chestRx + rx * bust,
+            chestRy + ry * bust + downY * 0.030f * h,
+            chestRx, chestRy
+        )
+        p.quadTo(
+            waistRx - rx * 0.014f * h,
+            waistRy - 0.006f * h,
+            waistRx, waistRy
+        )
+        p.quadTo(
+            fig.hipR.x + rx * 0.010f * h,
+            fig.hipR.y - 0.045f * h,
+            fig.hipR.x, fig.hipR.y
+        )
+        neonHot(canvas, p, w, 232)
+
+        // Left side, mirrored.
+        p.reset()
+        p.moveTo(fig.shoulderL.x, fig.shoulderL.y)
+        p.quadTo(
+            chestLx - rx * bust,
+            chestLy - ry * bust + downY * 0.030f * h,
+            chestLx, chestLy
+        )
+        p.quadTo(
+            waistLx + rx * 0.014f * h,
+            waistLy - 0.006f * h,
+            waistLx, waistLy
+        )
+        p.quadTo(
+            fig.hipL.x - rx * 0.010f * h,
+            fig.hipL.y - 0.045f * h,
+            fig.hipL.x, fig.hipL.y
+        )
+        neonHot(canvas, p, w, 232)
+
+        // Neckline: a shallow V between the collarbones down to the sternum.
+        p.reset()
+        p.moveTo(fig.shoulderL.x + rx * fig.shoulderHalf * 0.40f, fig.shoulderL.y)
+        p.quadTo(
+            fig.chest.x - rx * fig.chestHalf * 0.30f,
+            fig.chest.y + downY * 0.008f * h,
+            fig.chest.x, fig.chest.y + downY * 0.042f * h
+        )
+        p.quadTo(
+            fig.chest.x + rx * fig.chestHalf * 0.30f,
+            fig.chest.y + downY * 0.008f * h,
+            fig.shoulderR.x - rx * fig.shoulderHalf * 0.40f, fig.shoulderR.y
+        )
+        fine(canvas, p, w * 0.55f, 180)
+
+        // Collarbones.
+        p.reset()
+        p.moveTo(fig.neck.x, fig.neck.y)
+        p.quadTo(
+            (fig.neck.x + fig.shoulderR.x) * 0.5f,
+            (fig.neck.y + fig.shoulderR.y) * 0.5f + downY * 0.010f * h,
+            fig.shoulderR.x, fig.shoulderR.y
+        )
+        fine(canvas, p, w * 0.5f, 165)
+
+        p.reset()
+        p.moveTo(fig.neck.x, fig.neck.y)
+        p.quadTo(
+            (fig.neck.x + fig.shoulderL.x) * 0.5f,
+            (fig.neck.y + fig.shoulderL.y) * 0.5f + downY * 0.010f * h,
+            fig.shoulderL.x, fig.shoulderL.y
+        )
+        fine(canvas, p, w * 0.5f, 165)
+
+        // Under-bust curve.
+        p.reset()
+        p.moveTo(fig.chest.x - fig.chestHalf * 0.82f, fig.chest.y + downY * 0.040f * h)
+        p.quadTo(
+            fig.chest.x, fig.chest.y + downY * 0.060f * h,
+            fig.chest.x + fig.chestHalf * 0.82f, fig.chest.y + downY * 0.040f * h
+        )
+        fine(canvas, p, w * 0.5f, 160)
+
+        // Navel.
+        p.reset()
+        p.moveTo(waistLx, waistLy)
+        p.quadTo(baseX, baseY + downY * 0.016f * h, waistRx, waistRy)
+        fine(canvas, p, w * 0.45f, 140)
     }
 
-    /**
-     * Interior structure: spine, three rib arcs, two waist arcs, one hip arc.
-     * These are what stop the body from reading as an empty outline.
-     */
-    private fun drawTorsoLines(canvas: Canvas, fig: Figure, dancer: Dancer, h: Float) {
-        val w = h * 0.0105f
-        val top = fig.chest.y
-        val bottom = fig.pelvis.y
-        val breathe = 1f + dancer.energy * 0.06f
+    /** A short flared skirt - half of what makes a dancer read as a dancer. */
+    private fun drawSkirt(canvas: Canvas, fig: Figure, h: Float) {
+        val hemY = fig.pelvis.y + h * 0.132f
+        val lx = fig.hipL.x
+        val rx = fig.hipR.x
+        val flare = 1.62f
+        val hemLx = lx * flare
+        val hemRx = rx * flare
+        val w = h * 0.0150f
 
-        // Spine.
         p.reset()
-        p.moveTo(fig.pelvis.x, fig.pelvis.y - fig.hipHalf * 0.15f)
-        p.quadTo(
-            fig.pelvis.x + fig.waistHalf * 0.30f * (1f + dancer.energy),
-            lerp(top, bottom, 0.55f),
-            fig.chest.x,
-            top + fig.headRadius * 0.10f
-        )
-        neon(canvas, p, w, 175)
-
-        // Rib arcs.
+        p.moveTo(lx, fig.hipL.y)
+        p.quadTo(lx * (flare + 0.18f), fig.pelvis.y + h * 0.052f, hemLx, hemY)
+        // Scalloped hem.
+        val seg = (hemRx - hemLx) / 3f
         for (i in 0 until 3) {
-            val t = 0.74f - i * 0.17f
-            val y = lerp(top, bottom, t)
-            val half = lerp(fig.shoulderHalf, fig.waistHalf, 1f - t) * 0.84f
-            p.reset()
-            p.moveTo(fig.pelvis.x - half, y)
-            p.quadTo(fig.pelvis.x, y + fig.waistHalf * 0.32f * breathe, fig.pelvis.x + half, y)
-            neon(canvas, p, w * 0.88f, 150)
+            val x0 = hemLx + seg * i
+            val x1 = x0 + seg
+            p.quadTo((x0 + x1) * 0.5f, hemY + h * 0.028f, x1, hemY)
         }
+        p.quadTo(rx * (flare + 0.18f), fig.pelvis.y + h * 0.052f, rx, fig.hipR.y)
+        p.close()
+        neonHot(canvas, p, w, 225)
 
-        // Waist arcs.
-        for (i in 0 until 2) {
-            val y = lerp(top, bottom, 0.46f + i * 0.14f)
-            val half = fig.waistHalf * (1.00f + i * 0.18f)
-            p.reset()
-            p.moveTo(fig.pelvis.x - half, y)
-            p.quadTo(fig.pelvis.x, y + fig.waistHalf * 0.30f, fig.pelvis.x + half, y)
-            neon(canvas, p, w * 0.82f, 140)
-        }
-
-        // Hip arc.
+        // Waistband.
         p.reset()
-        p.moveTo(fig.hipL.x, fig.hipL.y)
-        p.quadTo(
-            fig.pelvis.x,
-            fig.pelvis.y - fig.hipHalf * 0.10f + fig.hipHalf * 0.52f,
-            fig.hipR.x,
-            fig.hipR.y
-        )
-        neon(canvas, p, w * 0.92f, 150)
+        p.moveTo(lx * 1.02f, fig.hipL.y - h * 0.012f)
+        p.quadTo(fig.pelvis.x, fig.pelvis.y - h * 0.020f, rx * 1.02f, fig.hipR.y - h * 0.012f)
+        fine(canvas, p, w * 0.7f, 180)
     }
+
+    // ---------------------------------------------------------------- limbs
 
     private fun drawLegs(canvas: Canvas, fig: Figure, dancer: Dancer, h: Float) {
-        val w = h * 0.0125f
-        val half = h * (0.0295f + dancer.energy * 0.0055f)
+        val w = h * 0.0130f
+        val thigh = h * 0.0290f
+        val calf = h * 0.0212f
+        val ankle = h * 0.0122f
 
-        neon(canvas, ribbon(fig.hipL, fig.kneeL, fig.footL, half), w, 225)
-        neon(canvas, ribbon(fig.hipR, fig.kneeR, fig.footR, half), w, 225)
+        drawLeg(canvas, fig.hipL, fig.kneeL, fig.ankleL, fig.footL, w, thigh, calf, ankle, dancer)
+        drawLeg(canvas, fig.hipR, fig.kneeR, fig.ankleR, fig.footR, w, thigh, calf, ankle, dancer)
+    }
 
-        // Knee hinges.
-        neon(canvas, circle(fig.kneeL, h * 0.0165f), w * 0.75f, 130)
-        neon(canvas, circle(fig.kneeR, h * 0.0165f), w * 0.75f, 130)
+    private fun drawLeg(
+        canvas: Canvas,
+        hip: PointF,
+        knee: PointF,
+        ankle: PointF,
+        foot: PointF,
+        w: Float,
+        thigh: Float,
+        calf: Float,
+        ankleW: Float,
+        dancer: Dancer
+    ) {
+        val bend = thigh * 0.22f * (1f + dancer.energy * 0.4f)
+        neon(canvas, edgePath(hip, knee, ankle, thigh, calf, ankleW, bend, 1f), w, 225)
+        neon(canvas, edgePath(hip, knee, ankle, thigh, calf, ankleW, bend, -1f), w, 225)
+
+        // Knee.
+        p.reset()
+        p.addCircle(knee.x, knee.y, calf * 0.92f, Path.Direction.CW)
+        fine(canvas, p, w * 0.6f, 130)
+
+        // Foot: a flat sole running forward from the ankle.
+        val (fx, fy) = unit(foot.x - ankle.x, foot.y - ankle.y)
+        p.reset()
+        p.moveTo(ankle.x - fx * ankleW * 0.7f, ankle.y - fy * ankleW * 0.7f)
+        p.lineTo(foot.x, foot.y)
+        p.lineTo(ankle.x + fx * ankleW * 0.7f, ankle.y + fy * ankleW * 0.7f)
+        fine(canvas, p, w * 0.8f, 190)
     }
 
     private fun drawArms(canvas: Canvas, fig: Figure, dancer: Dancer, h: Float) {
-        val w = h * 0.0110f
-        val half = h * (0.0225f + dancer.energy * 0.0045f)
+        val w = h * 0.0118f
+        val upper = h * 0.0212f
+        val fore = h * 0.0142f
 
-        neon(canvas, ribbon(fig.shoulderL, fig.elbowL, fig.handL, half), w, 230)
-        neon(canvas, ribbon(fig.shoulderR, fig.elbowR, fig.handR, half), w, 230)
-
-        // Elbow hinges.
-        neon(canvas, circle(fig.elbowL, h * 0.0135f), w * 0.75f, 130)
-        neon(canvas, circle(fig.elbowR, h * 0.0135f), w * 0.75f, 130)
+        drawArm(canvas, fig.shoulderL, fig.elbowL, fig.handL, w, upper, fore, dancer)
+        drawArm(canvas, fig.shoulderR, fig.elbowR, fig.handR, w, upper, fore, dancer)
     }
+
+    private fun drawArm(
+        canvas: Canvas,
+        shoulder: PointF,
+        elbow: PointF,
+        hand: PointF,
+        w: Float,
+        upper: Float,
+        fore: Float,
+        dancer: Dancer
+    ) {
+        val bend = upper * 0.24f * (1f + dancer.energy * 0.4f)
+        neon(canvas, edgePath(shoulder, elbow, hand, upper, fore, fore * 0.62f, bend, 1f), w, 228)
+        neon(canvas, edgePath(shoulder, elbow, hand, upper, fore, fore * 0.62f, bend, -1f), w, 228)
+
+        // Elbow.
+        p.reset()
+        p.addCircle(elbow.x, elbow.y, fore * 0.95f, Path.Direction.CW)
+        fine(canvas, p, w * 0.6f, 125)
+
+        // Hand: a small paddle.
+        val (hx, hy) = unit(hand.x - elbow.x, hand.y - elbow.y)
+        p.reset()
+        p.moveTo(
+            hand.x - hx * fore * 0.9f - hy * fore * 0.5f,
+            hand.y - hy * fore * 0.9f + hx * fore * 0.5f
+        )
+        p.quadTo(
+            hand.x + hx * fore * 0.5f, hand.y + hy * fore * 0.5f,
+            hand.x - hx * fore * 0.9f + hy * fore * 0.5f,
+            hand.y - hy * fore * 0.9f - hx * fore * 0.5f
+        )
+        fine(canvas, p, w * 0.75f, 195)
+    }
+
+    // ----------------------------------------------------------------- head
 
     private fun drawHead(canvas: Canvas, fig: Figure, h: Float) {
         val r = fig.headRadius
+        val w = h * 0.0155f
+        val hx = fig.head.x
+        val hy = fig.head.y
 
-        // Neck - two short lines.
+        // Neck: two converging lines from the base of the neck up to the jaw.
         p.reset()
-        p.moveTo(fig.chest.x - r * 0.34f, fig.chest.y + r * 0.12f)
-        p.lineTo(fig.head.x - r * 0.26f, fig.head.y + r * 0.78f)
-        neon(canvas, p, h * 0.0095f, 190)
+        p.moveTo(fig.neck.x - r * 0.42f, fig.neck.y)
+        p.quadTo(hx - r * 0.46f, hy + r * 0.92f, hx - r * 0.34f, hy + r * 0.74f)
+        fine(canvas, p, w * 0.62f, 185)
 
         p.reset()
-        p.moveTo(fig.chest.x + r * 0.34f, fig.chest.y + r * 0.12f)
-        p.lineTo(fig.head.x + r * 0.26f, fig.head.y + r * 0.78f)
-        neon(canvas, p, h * 0.0095f, 190)
+        p.moveTo(fig.neck.x + r * 0.42f, fig.neck.y)
+        p.quadTo(hx + r * 0.46f, hy + r * 0.92f, hx + r * 0.34f, hy + r * 0.74f)
+        fine(canvas, p, w * 0.62f, 185)
 
-        // Skull contour.
-        rect.set(fig.head.x - r * 0.90f, fig.head.y - r, fig.head.x + r * 0.90f, fig.head.y + r)
+        // Face: an oval that tapers into a soft chin.
         p.reset()
-        p.addOval(rect, Path.Direction.CW)
-        neonHot(canvas, p, h * 0.0175f, 228)
+        p.moveTo(hx - r * 0.86f, hy)
+        p.quadTo(hx - r * 0.95f, hy - r * 0.86f, hx, hy - r)
+        p.quadTo(hx + r * 0.95f, hy - r * 0.86f, hx + r * 0.86f, hy)
+        p.quadTo(hx + r * 0.80f, hy + r * 0.52f, hx + r * 0.30f, hy + r * 0.96f)
+        p.quadTo(hx, hy + r * 1.05f, hx - r * 0.30f, hy + r * 0.96f)
+        p.quadTo(hx - r * 0.80f, hy + r * 0.52f, hx - r * 0.86f, hy)
+        p.close()
+        neonHot(canvas, p, w, 228)
+    }
 
-        // Crown parting.
-        p.reset()
-        p.addArc(rect, 200f, 140f)
-        neon(canvas, p, h * 0.0100f, 165)
+    /** Brows, almond eyes, a nose and lips - small marks, big readability win. */
+    private fun drawFace(canvas: Canvas, fig: Figure, h: Float) {
+        val r = fig.headRadius
+        val w = h * 0.0078f
+        val hx = fig.head.x
+        val hy = fig.head.y
 
-        // Face profile: forehead -> nose -> lips -> chin.
+        val eyeY = hy + r * 0.10f
+        val eyeDx = r * 0.36f
+
+        for (side in intArrayOf(-1, 1)) {
+            val ex = hx + side * eyeDx
+
+            // Upper lid - a long, slightly lifted almond.
+            p.reset()
+            p.moveTo(ex - r * 0.20f, eyeY + r * 0.02f)
+            p.quadTo(ex - r * 0.02f, eyeY - r * 0.14f, ex + r * 0.20f, eyeY - r * 0.01f)
+            fine(canvas, p, w, 225)
+
+            // Lower lid.
+            p.reset()
+            p.moveTo(ex - r * 0.16f, eyeY + r * 0.07f)
+            p.quadTo(ex + r * 0.01f, eyeY + r * 0.15f, ex + r * 0.17f, eyeY + r * 0.04f)
+            fine(canvas, p, w * 0.8f, 170)
+
+            // Pupil.
+            p.reset()
+            p.addCircle(ex + side * r * 0.01f, eyeY + r * 0.02f, r * 0.050f, Path.Direction.CW)
+            fine(canvas, p, w * 1.1f, 210)
+
+            // Brow.
+            p.reset()
+            p.moveTo(ex - r * 0.19f, eyeY - r * 0.30f)
+            p.quadTo(ex + side * r * 0.02f, eyeY - r * 0.40f, ex + r * 0.20f, eyeY - r * 0.26f)
+            fine(canvas, p, w * 0.9f, 195)
+        }
+
+        // Nose.
         p.reset()
-        p.moveTo(fig.head.x + r * 0.16f, fig.head.y - r * 0.98f)
-        p.quadTo(
-            fig.head.x + r * 0.95f,
-            fig.head.y - r * 0.42f,
-            fig.head.x + r * 0.78f,
-            fig.head.y - r * 0.06f
-        )
-        p.quadTo(
-            fig.head.x + r * 0.64f,
-            fig.head.y + r * 0.12f,
-            fig.head.x + r * 0.84f,
-            fig.head.y + r * 0.30f
-        )
-        p.quadTo(
-            fig.head.x + r * 0.56f,
-            fig.head.y + r * 0.66f,
-            fig.head.x + r * 0.14f,
-            fig.head.y + r * 0.86f
-        )
-        neon(canvas, p, h * 0.0115f, 195)
+        p.moveTo(hx + r * 0.02f, eyeY + r * 0.10f)
+        p.quadTo(hx + r * 0.10f, eyeY + r * 0.28f, hx - r * 0.04f, eyeY + r * 0.32f)
+        fine(canvas, p, w * 0.75f, 165)
+
+        // Lips - a small cupid's bow.
+        val mouthY = eyeY + r * 0.52f
+        p.reset()
+        p.moveTo(hx - r * 0.13f, mouthY)
+        p.quadTo(hx - r * 0.05f, mouthY - r * 0.05f, hx, mouthY - r * 0.01f)
+        p.quadTo(hx + r * 0.05f, mouthY - r * 0.05f, hx + r * 0.13f, mouthY)
+        p.quadTo(hx, mouthY + r * 0.11f, hx - r * 0.13f, mouthY)
+        fine(canvas, p, w * 0.9f, 200)
     }
 
     // ----------------------------------------------------------------- hair
 
-    private fun drawHair(
+    private fun drawHairBack(
         canvas: Canvas,
         fig: Figure,
         dancer: Dancer,
         h: Float,
-        timeSec: Float,
-        layer: Int
+        timeSec: Float
     ) {
         when (dancer.style) {
-            HairStyle.STRAIGHT -> hairStraight(canvas, fig, dancer, h, timeSec, layer)
-            HairStyle.PONYTAIL -> hairPony(canvas, fig, dancer, h, timeSec, layer)
-            HairStyle.WAVES -> hairWaves(canvas, fig, dancer, h, timeSec, layer)
+            HairStyle.STRAIGHT -> hairStraight(canvas, fig, dancer, h, timeSec, true)
+            HairStyle.PONYTAIL -> hairPony(canvas, fig, dancer, h, timeSec, true)
+            HairStyle.WAVES -> hairWaves(canvas, fig, dancer, h, timeSec, true)
         }
+    }
+
+    private fun drawHairFront(
+        canvas: Canvas,
+        fig: Figure,
+        dancer: Dancer,
+        h: Float,
+        timeSec: Float
+    ) {
+        when (dancer.style) {
+            HairStyle.STRAIGHT -> hairStraight(canvas, fig, dancer, h, timeSec, false)
+            HairStyle.PONYTAIL -> hairPony(canvas, fig, dancer, h, timeSec, false)
+            HairStyle.WAVES -> hairWaves(canvas, fig, dancer, h, timeSec, false)
+        }
+    }
+
+    /**
+     * The hairline across the forehead, drawn on top of the face. This is what
+     * makes the head read as a girl's head rather than an egg.
+     */
+    private fun drawBangs(canvas: Canvas, fig: Figure, h: Float, tips: Int) {
+        val r = fig.headRadius
+        val hx = fig.head.x
+        val hy = fig.head.y
+        val w = h * 0.0125f
+
+        p.reset()
+        p.moveTo(hx - r * 1.02f, hy - r * 0.10f)
+        p.quadTo(hx - r * 0.70f, hy - r * 0.94f, hx, hy - r * 1.06f)
+        p.quadTo(hx + r * 0.70f, hy - r * 0.94f, hx + r * 1.02f, hy - r * 0.10f)
+        // The fringe edge runs back from the right temple to the left.
+        val seg = (r * 2.04f) / tips
+        for (i in tips - 1 downTo 0) {
+            val x1 = hx + r * 1.02f - seg * i
+            val x0 = x1 - seg
+            p.quadTo(
+                (x0 + x1) * 0.5f, hy - r * 0.16f,
+                x0, hy - r * 0.36f + (if (i % 2 == 0) 0f else r * 0.16f)
+            )
+        }
+        p.close()
+        neon(canvas, p, w, 210)
     }
 
     /** Long straight panels, each strand rippling on its own phase. */
@@ -356,30 +580,50 @@ class DancerRenderer {
         dancer: Dancer,
         h: Float,
         timeSec: Float,
-        layer: Int
+        back: Boolean
     ) {
         val r = fig.headRadius
-        val topY = fig.head.y - r * 0.22f
-        val botY = fig.pelvis.y + r * 3.5f
-        val baseOff = fig.shoulderHalf * 1.10f
-        val w = h * 0.0090f
+        val topY = fig.head.y - r * 0.30f
+        val botY = fig.pelvis.y + r * 3.2f
+        val baseOff = fig.shoulderHalf * 1.16f
+        val w = h * 0.0082f
         val amp = r * (0.13f + dancer.energy * 0.10f) * (1f + dancer.bounceRatio * 1.6f)
 
+        if (back) {
+            // A soft mass behind the head.
+            p.reset()
+            p.moveTo(fig.head.x - r * 1.04f, fig.head.y - r * 0.20f)
+            p.quadTo(
+                fig.head.x - baseOff * 1.15f, fig.head.y + r * 0.80f,
+                fig.head.x - baseOff * 0.92f, botY
+            )
+            p.lineTo(fig.head.x + baseOff * 0.92f, botY)
+            p.quadTo(
+                fig.head.x + baseOff * 1.15f, fig.head.y + r * 0.80f,
+                fig.head.x + r * 1.04f, fig.head.y - r * 0.20f
+            )
+            p.close()
+            neon(canvas, p, w * 1.15f, 190)
+        }
+
         for (side in intArrayOf(-1, 1)) {
-            for (i in strandRange(layer)) {
-                val t = strandT(i, layer)
+            val count = if (back) 3 else 2
+            for (i in 0 until count) {
+                val t = if (count <= 1) 0.5f else i.toFloat() / (count - 1)
                 val ph = dancer.phase + side * 0.65f + i * 0.83f
                 val swing = sin(timeSec * 1.7f + ph) * amp
-                val topX = fig.head.x + side * (baseOff - r * 0.30f + t * r * 0.26f)
-                val midX = fig.head.x + side * (baseOff + t * r * 0.34f) + swing
-                val endX = fig.head.x + side * (baseOff - r * 0.24f + t * r * 0.30f) + swing * 1.75f
+                val topX = fig.head.x + side * (baseOff - r * 0.34f + t * r * 0.24f)
+                val midX = fig.head.x + side * (baseOff + t * r * 0.30f) + swing
+                val endX = fig.head.x + side * (baseOff - r * 0.26f + t * r * 0.28f) + swing * 1.75f
 
                 p.reset()
                 p.moveTo(topX, topY)
                 p.quadTo(midX, lerp(topY, botY, 0.46f), endX, botY)
-                neon(canvas, p, w * (1f - t * 0.26f), (205 - t * 34).toInt())
+                fine(canvas, p, w * (1f - t * 0.22f), 200)
             }
         }
+
+        if (!back) drawBangs(canvas, fig, h, 4)
     }
 
     /** A single tail, split into strands that fan out and swing together. */
@@ -389,31 +633,56 @@ class DancerRenderer {
         dancer: Dancer,
         h: Float,
         timeSec: Float,
-        layer: Int
+        back: Boolean
     ) {
         val r = fig.headRadius
-        val w = h * 0.0102f
+        val w = h * 0.0094f
         val dir = -1f
         val swingBase = sin(timeSec * 2.1f + dancer.phase) * (0.30f + dancer.energy * 0.35f)
 
-        for (i in strandRange(layer)) {
-            val t = strandT(i, layer)
-            val spread = (t - 0.5f) * 1.25f
-            val ph = dancer.phase + i * 0.70f
-            val swing = swingBase + sin(timeSec * 2.6f + ph) * 0.16f
+        if (back) {
+            val count = 3
+            for (i in 0 until count) {
+                val t = if (count <= 1) 0.5f else i.toFloat() / (count - 1)
+                val spread = (t - 0.5f) * 1.25f
+                val ph = dancer.phase + i * 0.70f
+                val swing = swingBase + sin(timeSec * 2.6f + ph) * 0.16f
 
-            val startX = fig.head.x + dir * r * (0.60f + t * 0.20f)
-            val startY = fig.head.y - r * (0.26f - t * 0.12f)
-            val reach = r * (2.85f + t * 1.15f + swing * 0.80f)
-            val midX = fig.head.x + dir * reach * 0.92f + spread * r * 0.30f
-            val midY = fig.head.y - r * (0.35f + swing * 0.42f) - spread * r * 0.20f
-            val endX = fig.head.x + dir * reach * 1.02f + spread * r * 0.55f
-            val endY = fig.head.y + r * (2.35f + t * 0.95f + swing * 0.55f)
+                val startX = fig.head.x + dir * r * (0.60f + t * 0.20f)
+                val startY = fig.head.y - r * (0.26f - t * 0.12f)
+                val reach = r * (2.85f + t * 1.15f + swing * 0.80f)
+                val midX = fig.head.x + dir * reach * 0.92f + spread * r * 0.30f
+                val midY = fig.head.y - r * (0.35f + swing * 0.42f) - spread * r * 0.20f
+                val endX = fig.head.x + dir * reach * 1.02f + spread * r * 0.55f
+                val endY = fig.head.y + r * (2.35f + t * 0.95f + swing * 0.55f)
 
+                p.reset()
+                p.moveTo(startX, startY)
+                p.quadTo(midX, midY, endX, endY)
+                fine(canvas, p, w * (1.12f - t * 0.30f), 205)
+            }
+        } else {
+            // A swept fringe tied on one side.
             p.reset()
-            p.moveTo(startX, startY)
-            p.quadTo(midX, midY, endX, endY)
-            neon(canvas, p, w * (1.12f - t * 0.34f), (210 - t * 42).toInt())
+            p.moveTo(fig.head.x - r * 1.02f, fig.head.y - r * 0.16f)
+            p.quadTo(
+                fig.head.x - r * 0.55f, fig.head.y - r * 1.02f,
+                fig.head.x + r * 0.18f, fig.head.y - r * 0.92f
+            )
+            p.quadTo(
+                fig.head.x + r * 0.86f, fig.head.y - r * 0.80f,
+                fig.head.x + r * 1.00f, fig.head.y - r * 0.10f
+            )
+            p.quadTo(
+                fig.head.x + r * 0.40f, fig.head.y - r * 0.42f,
+                fig.head.x - r * 0.28f, fig.head.y - r * 0.20f
+            )
+            p.quadTo(
+                fig.head.x - r * 0.72f, fig.head.y - r * 0.06f,
+                fig.head.x - r * 1.02f, fig.head.y - r * 0.16f
+            )
+            p.close()
+            neon(canvas, p, w * 1.25f, 205)
         }
     }
 
@@ -424,70 +693,69 @@ class DancerRenderer {
         dancer: Dancer,
         h: Float,
         timeSec: Float,
-        layer: Int
+        back: Boolean
     ) {
         val r = fig.headRadius
-        val topY = fig.head.y - r * 0.18f
-        val botY = fig.pelvis.y + r * 3.3f
-        val baseOff = fig.shoulderHalf * 1.16f
-        val w = h * 0.0096f
-        val steps = 20
+        val topY = fig.head.y - r * 0.26f
+        val botY = fig.pelvis.y + r * 3.0f
+        val baseOff = fig.shoulderHalf * 1.22f
+        val w = h * 0.0088f
+        val steps = 18
 
         for (side in intArrayOf(-1, 1)) {
-            for (i in strandRange(layer)) {
-                val t = strandT(i, layer)
+            val count = if (back) 3 else 2
+            for (i in 0 until count) {
+                val t = if (count <= 1) 0.5f else i.toFloat() / (count - 1)
                 val ph = dancer.phase + side * 1.05f + i * 0.77f
-                val rippleAmp = r * (0.24f + dancer.energy * 0.16f) * (1f - t * 0.28f)
+                val rippleAmp = r * (0.26f + dancer.energy * 0.16f) * (1f - t * 0.28f)
 
                 p.reset()
                 for (k in 0..steps) {
                     val u = k.toFloat() / steps
                     val y = lerp(topY, botY, u)
                     val taper = 1f - u * 0.20f
-                    val ripple = sin(u * 7.2f + timeSec * 2.5f + ph)
+                    val ripple = sin(u * 6.6f + timeSec * 2.5f + ph)
                     val x = fig.head.x +
-                        side * (baseOff * taper * 0.92f + r * (0.44f + t * 0.24f)) +
+                        side * (baseOff * taper * 0.92f + r * (0.40f + t * 0.22f)) +
                         ripple * rippleAmp * side
                     if (k == 0) p.moveTo(x, y) else p.lineTo(x, y)
                 }
-                neon(canvas, p, w * (1f - t * 0.28f), (198 - t * 32).toInt())
+                fine(canvas, p, w * (1f - t * 0.24f), 198)
             }
         }
+
+        if (!back) drawBangs(canvas, fig, h, 5)
     }
-
-    /** Strand indices for the layer: back layer first, a couple on top of the body. */
-    private fun strandRange(layer: Int): IntArray =
-        if (layer == BACK) intArrayOf(0, 1, 2, 3, 4) else intArrayOf(5, 6)
-
-    private fun strandT(i: Int, layer: Int): Float =
-        if (layer == BACK) i / 4f else (i - 4f) / 2f
 
     // ----------------------------------------------------------------- echo
 
-    /**
-     * Two ghost contours trailing the body. They lag behind the sway, which
-     * reads as motion blur and makes the figure feel alive rather than posed.
-     */
-    private fun drawEchoes(canvas: Canvas, fig: Figure, dancer: Dancer, h: Float) {
-        for (i in 0 until 2) {
-            val k = i + 1
-            val dx = -dancer.sway * h * 0.0016f * k
-            val dy = h * 0.009f * k
-            val a = (44 - k * 13).coerceIn(12, 60)
+    /** One ghost contour trailing the body - motion blur, and it reads as life. */
+    private fun drawEcho(canvas: Canvas, fig: Figure, dancer: Dancer, h: Float) {
+        val a = (30 * alphaScale).toInt().coerceIn(0, 255)
+        val dx = -dancer.sway * h * 0.0018f
+        val dy = h * 0.008f
+        val legW = h * 0.0270f
 
-            canvas.save()
-            canvas.translate(dx, dy)
-            flat(canvas, torsoPath(fig), h * 0.0125f, a)
-            flat(canvas, ribbon(fig.shoulderL, fig.elbowL, fig.handL, h * 0.030f), h * 0.0090f, a)
-            flat(canvas, ribbon(fig.shoulderR, fig.elbowR, fig.handR, h * 0.030f), h * 0.0090f, a)
-            flat(canvas, ribbon(fig.hipL, fig.kneeL, fig.footL, h * 0.030f), h * 0.0090f, a)
-            flat(canvas, ribbon(fig.hipR, fig.kneeR, fig.footR, h * 0.030f), h * 0.0090f, a)
-            canvas.restore()
-        }
-    }
-
-    private companion object {
-        const val BACK = 0
-        const val FRONT = 1
+        canvas.save()
+        canvas.translate(dx, dy)
+        p.reset()
+        p.moveTo(fig.shoulderR.x, fig.shoulderR.y)
+        p.quadTo(
+            fig.chest.x + (fig.shoulderR.x - fig.shoulderL.x) * 0.44f,
+            fig.chest.y + (fig.shoulderR.y - fig.shoulderL.y) * 0.44f + h * 0.030f,
+            fig.hipR.x, fig.hipR.y
+        )
+        fine(canvas, p, h * 0.0110f, a)
+        fine(
+            canvas,
+            edgePath(fig.hipL, fig.kneeL, fig.ankleL, legW, legW * 0.72f, legW * 0.42f, legW * 0.20f, 1f),
+            h * 0.0080f, a
+        )
+        fine(
+            canvas,
+            edgePath(fig.hipR, fig.kneeR, fig.ankleR, legW, legW * 0.72f, legW * 0.42f, legW * 0.20f, 1f),
+            h * 0.0080f, a
+        )
+        canvas.restore()
     }
 }

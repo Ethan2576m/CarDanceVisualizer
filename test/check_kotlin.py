@@ -142,13 +142,27 @@ REQUIRED_IMPORTS = {
         "android.graphics.Canvas", "android.graphics.Color",
         "android.graphics.LinearGradient", "android.graphics.Matrix",
         "android.graphics.Paint", "android.graphics.Path",
-        "android.graphics.PointF", "android.graphics.RectF",
-        "android.graphics.Shader",
+        "android.graphics.PointF", "android.graphics.Shader",
         "com.cardance.visualizer.dance.Dancer",
         "com.cardance.visualizer.dance.Figure",
         "com.cardance.visualizer.dance.HairStyle",
         "com.cardance.visualizer.util.lerp",
         "kotlin.math.sin", "kotlin.math.sqrt",
+    ],
+    "StageView.kt": [
+        "android.graphics.Canvas", "android.graphics.Color",
+        "android.graphics.Paint", "android.graphics.Path",
+        "com.cardance.visualizer.dance.Dancer",
+        "com.cardance.visualizer.dance.HairStyle",
+        "com.cardance.visualizer.dance.SpecialPhase",
+        "kotlin.math.cos", "kotlin.math.sin",
+    ],
+    "Dancer.kt": [
+        "com.cardance.visualizer.util.lerp",
+    ],
+    "Skeleton.kt": [
+        "android.graphics.PointF",
+        "com.cardance.visualizer.util.lerp",
     ],
 }
 

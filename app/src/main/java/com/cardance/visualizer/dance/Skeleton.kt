@@ -66,13 +66,19 @@ data class Pose(
 /**
  * Resolved joint positions in **figure-local pixels**, origin at the pelvis,
  * +y downward. Heights are derived from the requested figure height [h].
+ *
+ * The proportions follow a young woman's build rather than a generic stick
+ * figure: small head, long legs, narrow shoulders, a defined waist and a
+ * slightly wider hip - roughly 7.5 heads tall.
  */
 data class Figure(
     val pelvis: PointF,
     val chest: PointF,
+    val neck: PointF,
     val head: PointF,
     val headRadius: Float,
     val shoulderHalf: Float,
+    val chestHalf: Float,
     val waistHalf: Float,
     val hipHalf: Float,
     val shoulderL: PointF,
@@ -84,25 +90,31 @@ data class Figure(
     val elbowR: PointF,
     val handR: PointF,
     val kneeL: PointF,
+    val ankleL: PointF,
     val footL: PointF,
     val kneeR: PointF,
+    val ankleR: PointF,
     val footR: PointF
 )
 
 object Kinematics {
 
     // Segment lengths as a fraction of total figure height.
-    private const val TORSO = 0.30f
-    private const val NECK = 0.085f
-    private const val HEAD_R = 0.072f
-    private const val UPPER_ARM = 0.165f
-    private const val FOREARM = 0.155f
-    private const val THIGH = 0.245f
-    private const val SHIN = 0.235f
-    private const val SHOULDER_HALF = 0.105f
-    private const val HIP_HALF = 0.100f
-    // Narrower than both shoulders and hips -> reads as an hourglass silhouette.
-    private const val WAIST_HALF = 0.072f
+    private const val TORSO = 0.272f
+    // Chest -> centre of the head. Long enough that a real neck shows between
+    // the collarbones and the chin (about a quarter of a head height).
+    private const val NECK = 0.092f
+    private const val HEAD_R = 0.064f
+    private const val UPPER_ARM = 0.152f
+    private const val FOREARM = 0.142f
+    private const val THIGH = 0.258f
+    private const val SHIN = 0.252f
+    private const val FOOT = 0.052f
+    private const val SHOULDER_HALF = 0.094f
+    private const val CHEST_HALF = 0.083f
+    private const val HIP_HALF = 0.092f
+    // Narrower than both chest and hips -> a defined waist.
+    private const val WAIST_HALF = 0.055f
 
     fun point(from: PointF, length: Float, angleDeg: Float): PointF {
         val a = angleDeg * DEG_TO_RAD
@@ -114,7 +126,7 @@ object Kinematics {
         val leftAng = up + 90f     // toward screen-left, rotated with the body
         val rightAng = up - 90f
 
-        val torsoLen = TORSO * (1f - pose.crouch * 0.12f) * h
+        val torsoLen = TORSO * (1f - pose.crouch * 0.16f) * h
         val pelvis = PointF(0f, 0f)
         val chest = point(pelvis, torsoLen, up)
 
@@ -122,6 +134,8 @@ object Kinematics {
         val shoulderR = point(chest, SHOULDER_HALF * h, rightAng)
         val hipL = point(pelvis, HIP_HALF * h, leftAng)
         val hipR = point(pelvis, HIP_HALF * h, rightAng)
+
+        val neck = point(chest, NECK * h * 0.20f, up + pose.headTilt)
         val head = point(chest, NECK * h, up + pose.headTilt)
 
         val elbowL = point(shoulderL, UPPER_ARM * h, pose.shoulderL)
@@ -131,18 +145,23 @@ object Kinematics {
 
         // A squat reads as extra knee bend; feet lifting off the floor line is fine
         // because the stage is abstract - it just looks like a jump.
-        val extraBend = pose.crouch * 24f
+        val extraBend = pose.crouch * 26f
         val kneeL = point(hipL, THIGH * h, pose.hipL)
-        val footL = point(kneeL, SHIN * h, pose.kneeL + extraBend)
         val kneeR = point(hipR, THIGH * h, pose.hipR)
-        val footR = point(kneeR, SHIN * h, pose.kneeR + extraBend)
+        val ankleL = point(kneeL, SHIN * h * 0.90f, pose.kneeL + extraBend)
+        val ankleR = point(kneeR, SHIN * h * 0.90f, pose.kneeR + extraBend)
+        // The foot points down from the ankle - a flat sole, not an angled hoof.
+        val footL = point(ankleL, FOOT * h, 0f)
+        val footR = point(ankleR, FOOT * h, 0f)
 
         return Figure(
             pelvis = pelvis,
             chest = chest,
+            neck = neck,
             head = head,
             headRadius = HEAD_R * h,
             shoulderHalf = SHOULDER_HALF * h,
+            chestHalf = CHEST_HALF * h,
             waistHalf = WAIST_HALF * h,
             hipHalf = HIP_HALF * h,
             shoulderL = shoulderL,
@@ -154,8 +173,10 @@ object Kinematics {
             elbowR = elbowR,
             handR = handR,
             kneeL = kneeL,
+            ankleL = ankleL,
             footL = footL,
             kneeR = kneeR,
+            ankleR = ankleR,
             footR = footR
         )
     }

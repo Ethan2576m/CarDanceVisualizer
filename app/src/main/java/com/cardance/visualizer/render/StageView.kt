@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RadialGradient
 import android.graphics.Shader
 import android.util.AttributeSet
@@ -17,9 +18,13 @@ import com.cardance.visualizer.audio.Rhythm
 import com.cardance.visualizer.dance.DanceMode
 import com.cardance.visualizer.dance.Dancer
 import com.cardance.visualizer.dance.HairStyle
+import com.cardance.visualizer.dance.SpecialPhase
 import com.cardance.visualizer.util.approach
 import com.cardance.visualizer.util.clamp01
+import com.cardance.visualizer.util.easeInOutQuad
+import kotlin.math.cos
 import kotlin.math.min
+import kotlin.math.sin
 import kotlin.random.Random
 
 /**
@@ -30,6 +35,12 @@ import kotlin.random.Random
  * during a detected chorus they grow and push outward so the canvas (the screen)
  * crops them, which is the "break out of the frame" effect. The centre dancer
  * stays inside so nothing important is ever covered.
+ *
+ * On a chorus the stage hands control to one dancer for a KOF-style finishing
+ * move: she gathers light, the screen flashes, then she bursts outward with
+ * radial light and a shockwave. **Only she grows** - the equaliser, the HUD and
+ * the other two dancers stay exactly where they are, so the moment reads as
+ * "the dancer powers up", not "the screen zooms in".
  */
 class StageView @JvmOverloads constructor(
     context: Context,
@@ -79,6 +90,19 @@ class StageView @JvmOverloads constructor(
         )
     )
 
+    /** Screen placement of each dancer, needed by the special-effect layer. */
+    private class Placement {
+        var cx = 0f
+        var pelvisY = 0f
+        var figH = 0f
+    }
+
+    private val placements = Array(dancers.size) { Placement() }
+
+    /** Index of the dancer currently running a finishing move. */
+    private var specialIndex = 1
+    private var lastChorus = false
+
     private var lastBeatSeen = 0L
     private var timeSec = 0f
     private var lastFrameNanos = 0L
@@ -97,6 +121,14 @@ class StageView @JvmOverloads constructor(
     }
     private val chipPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val idleRhythm = Rhythm()
+
+    // --- special move effects -------------------------------------------------
+    private val fxFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val fxStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val fxPath = Path()
 
     init {
         setBackgroundColor(Color.parseColor(BG_HEX))
@@ -154,7 +186,22 @@ class StageView @JvmOverloads constructor(
             }
         }
 
+        // A chorus starts a finishing move. The performer rotates so every
+        // dancer gets a turn, starting with the one in the middle.
+        if (rhythm.chorus && !lastChorus) {
+            specialIndex = (specialIndex + 1) % dancers.size
+            dancers[specialIndex].triggerSpecial()
+        }
+        lastChorus = rhythm.chorus
+
         for (d in dancers) d.update(dt, rhythm, width.toFloat())
+
+        // While somebody is performing, the other two step back visually.
+        val anySpecial = dancers.any { it.special != SpecialPhase.NONE }
+        for (d in dancers) {
+            val target = if (!anySpecial || d.special != SpecialPhase.NONE) 1f else 0.40f
+            d.applyDim(target)
+        }
 
         val src = rhythm.spectrum
         for (i in spectrum.indices) {
@@ -172,8 +219,10 @@ class StageView @JvmOverloads constructor(
 
         canvas.drawColor(Color.parseColor(BG_HEX))
         drawAmbientGlow(canvas, w, h, rhythm)
+        drawChargeFx(canvas, w, h)
         drawEqualiser(canvas, w, h, rhythm)
         drawDancers(canvas, w, h, rhythm)
+        drawBurstFx(canvas, w, h)
         drawHud(canvas, w, h, rhythm)
     }
 
@@ -220,7 +269,7 @@ class StageView @JvmOverloads constructor(
         val half = bands / 2
         for (i in 0 until bands) {
             // Mirror around the centre so it reads as a symmetric reaction floor.
-            val mirroredIdx = if (i < half) half - 1 - i else i - half
+            val mirroredIdx = if (i < half) half - 1 - i else i - bands / 2
             val v = clamp01(spectrum[mirroredIdx] * 1.25f + rhythm.beatPulse * 0.20f)
             val bh = (v * maxH).coerceAtLeast(4f)
             val x = startX + slot * i + slot / 2f
@@ -235,7 +284,8 @@ class StageView @JvmOverloads constructor(
         val availTop = h * 0.10f
         val availH = floorY - availTop
 
-        for (d in dancers) {
+        for (i in dancers.indices) {
+            val d = dancers[i]
             val figH = (availH / FIGURE_RATIO) * d.scaleNow
             val bounceLift = d.bounceRatio * figH
             val cx = w * d.centerRatioX +
@@ -243,7 +293,127 @@ class StageView @JvmOverloads constructor(
             // Pelvis sits FIGURE_BELOW_ABOVE above the feet line.
             val pelvisY = floorY - FIGURE_BELOW * figH - bounceLift
             val fig = d.buildFigure(figH)
+
+            val pl = placements[i]
+            pl.cx = cx
+            pl.pelvisY = pelvisY
+            pl.figH = figH
+
             renderer.draw(canvas, d, fig, cx, pelvisY, figH, timeSec)
+        }
+    }
+
+    // ------------------------------------------------------------ special fx
+
+    /** Light drawn behind the performer while she gathers power. */
+    private fun drawChargeFx(canvas: Canvas, w: Float, h: Float) {
+        val d = dancers[specialIndex]
+        if (d.special != SpecialPhase.CHARGE) return
+        val pl = placements[specialIndex]
+        val t = easeInOutQuad(d.specialT)
+        val figH = pl.figH
+        val cx = pl.cx
+        val cy = pl.pelvisY - figH * 0.30f
+        val floorY = pl.pelvisY + figH * 0.48f
+
+        // The rest of the stage falls back so the eye lands on her.
+        canvas.drawColor(Color.argb((70 * (1f - t)).toInt().coerceIn(0, 70), 0, 0, 0))
+
+        // Light motes pulled inward.
+        val motes = 30
+        for (i in 0 until motes) {
+            val a = (i.toFloat() / motes) * TWO_PI + timeSec * 1.6f
+            val radius = figH * (0.92f - 0.74f * t)
+            val px = cx + cos(a) * radius
+            val py = cy + sin(a) * radius * 0.68f
+            val size = figH * (0.008f + 0.010f * t)
+            fxFill.color = d.color
+            fxFill.alpha = (150 + 80 * t).toInt().coerceIn(0, 255)
+            canvas.drawCircle(px, py, size * 2.6f, fxFill)
+            fxFill.alpha = 255
+            fxFill.color = Color.WHITE
+            canvas.drawCircle(px, py, size, fxFill)
+        }
+
+        // A ring tightening on the floor under her.
+        fxStroke.color = d.color
+        fxStroke.strokeWidth = figH * 0.010f
+        fxStroke.alpha = (170 * t).toInt().coerceIn(0, 255)
+        canvas.drawOval(
+            cx - figH * (0.46f - 0.24f * t),
+            floorY - figH * 0.030f,
+            cx + figH * (0.46f - 0.24f * t),
+            floorY + figH * 0.030f,
+            fxStroke
+        )
+    }
+
+    /** Light drawn on top of the performer: the flash, the rays, the shockwave. */
+    private fun drawBurstFx(canvas: Canvas, w: Float, h: Float) {
+        val d = dancers[specialIndex]
+        val pl = placements[specialIndex]
+        val figH = pl.figH
+        val cx = pl.cx
+        val cy = pl.pelvisY - figH * 0.28f
+        val floorY = pl.pelvisY + figH * 0.48f
+
+        when (d.special) {
+            SpecialPhase.FLASH -> {
+                val a = ((1f - d.specialT) * 210).toInt().coerceIn(0, 255)
+                canvas.drawColor(Color.argb(a, 255, 255, 255))
+            }
+
+            SpecialPhase.BURST -> {
+                val t = d.specialT
+
+                // Radial light rays.
+                val rays = 22
+                val len = figH * (0.45f + 1.15f * easeInOutQuad(min(1f, t * 2.2f)))
+                val halfW = figH * 0.016f
+                fxFill.color = d.color
+                for (i in 0 until rays) {
+                    val ang = (i.toFloat() / rays) * TWO_PI + t * 0.7f
+                    val ca = cos(ang)
+                    val sa = sin(ang)
+                    fxPath.reset()
+                    fxPath.moveTo(cx, cy)
+                    fxPath.lineTo(cx + ca * len - sa * halfW, cy + sa * len + ca * halfW)
+                    fxPath.lineTo(cx + ca * len + sa * halfW, cy + sa * len - ca * halfW)
+                    fxPath.close()
+                    fxFill.alpha = (110 * (1f - t * 0.55f)).toInt().coerceIn(0, 255)
+                    canvas.drawPath(fxPath, fxFill)
+                }
+
+                // The shockwave slamming into the floor.
+                val ringR = figH * (0.18f + 1.45f * t)
+                fxStroke.color = Color.WHITE
+                fxStroke.strokeWidth = figH * (0.020f * (1f - t * 0.6f) + 0.004f)
+                fxStroke.alpha = ((1f - t) * 200).toInt().coerceIn(0, 255)
+                canvas.drawOval(
+                    cx - ringR,
+                    floorY - ringR * 0.20f,
+                    cx + ringR,
+                    floorY + ringR * 0.20f,
+                    fxStroke
+                )
+                fxStroke.color = d.color
+                fxStroke.alpha = ((1f - t) * 140).toInt().coerceIn(0, 255)
+                canvas.drawOval(
+                    cx - ringR * 1.25f,
+                    floorY - ringR * 0.25f,
+                    cx + ringR * 1.25f,
+                    floorY + ringR * 0.25f,
+                    fxStroke
+                )
+
+                // The core of the release.
+                fxFill.color = Color.WHITE
+                fxFill.alpha = ((1f - t) * 190).toInt().coerceIn(0, 255)
+                canvas.drawCircle(cx, cy, figH * 0.085f * (1f + t * 2.2f), fxFill)
+                fxFill.alpha = 255
+            }
+
+            else -> Unit
         }
     }
 
@@ -257,7 +427,26 @@ class StageView @JvmOverloads constructor(
         val modeText = if (demoMode) "演示" else danceMode.label
         canvas.drawText("$bpmText   ·   $modeText", pad, pad + 74f, textPaint)
 
-        if (rhythm.chorus) {
+        val performer = dancers[specialIndex]
+        if (performer.special != SpecialPhase.NONE) {
+            val label = when (performer.special) {
+                SpecialPhase.CHARGE -> "蓄力"
+                SpecialPhase.FLASH -> "闪光"
+                SpecialPhase.BURST -> "必杀"
+                SpecialPhase.NONE -> ""
+            }
+            val tw = strongTextPaint.measureText(label)
+            val left = pad
+            val top = pad + 96f
+            chipPaint.color = Color.parseColor("#1F0A16")
+            canvas.drawRoundRect(left, top, left + tw + 40f, top + 46f, 23f, 23f, chipPaint)
+            chipPaint.style = Paint.Style.STROKE
+            chipPaint.strokeWidth = 2f
+            chipPaint.color = performer.color
+            canvas.drawRoundRect(left, top, left + tw + 40f, top + 46f, 23f, 23f, chipPaint)
+            chipPaint.style = Paint.Style.FILL
+            canvas.drawText(label, left + 20f, top + 31f, strongTextPaint)
+        } else if (rhythm.chorus) {
             val label = "副歌 · 律动爆发"
             val tw = strongTextPaint.measureText(label)
             val left = pad
@@ -296,5 +485,6 @@ class StageView @JvmOverloads constructor(
         /** Total figure height as a fraction of the skeleton's nominal `h`. */
         private const val FIGURE_RATIO = 0.937f
         private const val SILENCE_WARN_SECONDS = 4L
+        private const val TWO_PI = 6.2831855f
     }
 }

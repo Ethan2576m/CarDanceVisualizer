@@ -97,6 +97,29 @@ object DanceLibrary {
         )
     )
 
+    /**
+     * 大招姿势：蓄力下蹲（重心压低、双臂后拉、头微低）。
+     * 少女体型做这个动作时肩胛内收、腰背拉长，是格斗游戏"聚气"的标准读法。
+     */
+    val CHARGE_POSE = Pose(
+        lean = 0f, headTilt = 6f, crouch = 0.82f,
+        shoulderL = 262f, elbowL = 296f,
+        shoulderR = 98f, elbowR = 64f,
+        hipL = 326f, kneeL = 300f,
+        hipR = 34f, kneeR = 60f
+    )
+
+    /**
+     * 大招姿势：冲天爆发（双臂高举展开、躯干拉伸、腿蹬直）。
+     */
+    val BURST_POSE = Pose(
+        lean = 0f, headTilt = -8f, crouch = 0f,
+        shoulderL = 206f, elbowL = 196f,
+        shoulderR = 154f, elbowR = 164f,
+        hipL = 340f, kneeL = 355f,
+        hipR = 20f, kneeR = 5f
+    )
+
     fun nextPose(current: Pose, mode: DanceMode, rnd: Random): Pose = when (mode) {
         DanceMode.RANDOM -> {
             // Avoid repeating the same shape twice in a row.
