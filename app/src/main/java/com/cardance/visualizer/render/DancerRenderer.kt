@@ -686,6 +686,10 @@ class DancerRenderer {
             HairStyle.STRAIGHT -> hairStrands(canvas, fig, dancer, h, timeSec, false)
             HairStyle.PONYTAIL -> hairPonyTail(canvas, fig, dancer, h, timeSec)
             HairStyle.WAVES -> hairWaves(canvas, fig, dancer, h, timeSec)
+            // Portrait-only looks: mapped to the closest procedural fallback so
+            // a portrait dancer switched back to procedural still renders hair.
+            HairStyle.RIBBON -> hairStrands(canvas, fig, dancer, h, timeSec, false)
+            HairStyle.HALFUP -> hairWaves(canvas, fig, dancer, h, timeSec)
         }
     }
 
@@ -704,6 +708,15 @@ class DancerRenderer {
             }
             HairStyle.PONYTAIL -> sweptFringe(canvas, fig, dancer, h)
             HairStyle.WAVES -> {
+                hairBangs(canvas, fig, dancer, h)
+                faceLocks(canvas, fig, h)
+            }
+            HairStyle.RIBBON -> {
+                hairBangs(canvas, fig, dancer, h)
+                faceLocks(canvas, fig, h)
+                hairStrands(canvas, fig, dancer, h, timeSec, true)
+            }
+            HairStyle.HALFUP -> {
                 hairBangs(canvas, fig, dancer, h)
                 faceLocks(canvas, fig, h)
             }
