@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
 """
-Offline preview of the dancer geometry - realistic figure, line-only rendering.
+Offline preview of the dancer geometry - manga line-art character.
 
-Ports the exact numbers from the Kotlin renderer (Kinematics + DancerRenderer)
-into SVG, so the figure can be judged without building the APK.
+Round 5 target: the character design follows the user's reference image -
+a monochrome manga pencil sketch with a detailed anime face, a high
+ponytail and a zip jacket - while the body keeps the realistic ~7-head
+proportions established in round 4:
 
-Round 3 target: **写实人体 + 线条画法** - the body itself has to read as a
-real young woman, but the medium stays line art (no shading fills):
-  - proportions retuned to ~7.2 heads (was ~6.4, too stylised);
-  - the skull is a real cranium: forehead -> temple -> brow -> cheekbone ->
-    jaw angle -> chin, still with no facial features;
-  - anatomy lines added: sternum, iliac crest, patella + popliteal crease,
-    ankle joint crease, palm crease;
-  - hair grouped finer: parting, temple hairlines, 5+4 strands per side with
-    staggered tips;
-  - clothes differentiate tension (over the bust / hip) from drape (hem,
-    waistband) instead of one uniform pleat set.
+  - **face is back**: large anime eyes (iris + pupil + double highlight +
+    lash line), eyebrows, tiny nose, lips, ears with a stud; the skull
+    stays a real cranium, features rotate with the head tilt;
+  - **hair tied up**: a bun at the crown with a tie band, a ponytail
+    tail sweeping out with an S-curve, side-swept fringe with a deep
+    parting, tapered face locks, staggered falling strands;
+  - **zip jacket**: folded collar lapels, centre zipper with a pull,
+    shoulder seams, side seams, hip-length hem, tension folds - it
+    replaces the crop top, the A-line skirt stays underneath;
+  - jaw shadow hatching under the right jaw (manga light from upper-left).
+
+Two render modes share one geometry:
+  - "neon"  - the app look: glowing gradient filaments on the dark stage;
+  - "mono"  - the reference look: ink lines on paper, light pencil fills
+              on the hair masses, no glow.
 
 Usage:  python test/preview_dancer.py [out.svg]
 """
@@ -151,28 +157,39 @@ def oval_path(cx, cy, rx, ry):
 
 
 # ------------------------------------------------------------ line weights
-W_CONTOUR = 0.0160
-W_LIMB = 0.0130
+# Manga line language: the outer contour is bold and committed, every
+# interior line drops to ink-thin; only contour keeps the bloom in neon
+# mode so the glow reads as the silhouette, not as noise.
+W_CONTOUR = 0.0188
+W_LIMB = 0.0136
 W_STRUCT = 0.0104
 W_FOLD = 0.0068
-W_HAIR = 0.0074
+W_HAIR = 0.0076
 W_DETAIL = 0.0046
 
-A_CONTOUR = 0.93
+A_CONTOUR = 0.94
 A_LIMB = 0.88
 A_STRUCT = 0.76
 A_FOLD = 0.60
 A_HAIR = 0.70
 A_DETAIL = 0.46
 
+# pencil fills (rgba) - used by the mono renderer for hair masses + eyes
+HAIR_FILL = (22, 22, 30, 0.11)
+PAPER = (246, 244, 239, 1.0)
+IRIS = (30, 30, 40, 0.92)
+PUPIL = (12, 12, 18, 0.96)
+SPARK = (255, 255, 255, 0.95)
+SPARK_SOFT = (255, 255, 255, 0.50)
 
-def add(out, p, w, a, bloom=False, hot=False):
-    out.append((p.svg(), w, a, bloom, hot))
+
+def add(out, p, w, a, bloom=False, hot=False, fill=None):
+    out.append((p.svg(), w, a, bloom, hot, fill))
 
 
 # ------------------------------------------------------------------ render
-def render(fig, h, ox, oy):
-    """Return a list of (path_svg, width, opacity, bloom, hot) tuples."""
+def render(fig, h, ox, oy, mode="neon"):
+    """Return a list of (path_svg, width, opacity, bloom, hot, fill) tuples."""
     out = []
     r = fig["r"]
     hx, hy = fig["head"]
@@ -203,6 +220,18 @@ def render(fig, h, ox, oy):
     wH = W_HAIR
     wD = W_DETAIL
 
+    # head orientation: local face coords are (right, up) in units of r
+    upx, upy = unit(fig["head"][0] - fig["neck"][0], fig["head"][1] - fig["neck"][1])
+    rtx, rty = -upy, upx
+
+    def fp(px, py):
+        return (hx + (px * rtx + py * upx) * r, hy + (px * rty + py * upy) * r)
+
+    hair_fill = HAIR_FILL if mode == "mono" else None
+    # the face skin is paper in mono mode - it erases the back hair mass
+    # behind the features so the cranium never reads as shaded
+    skin = PAPER if mode == "mono" else None
+
     # ============================================================ echo
     echo_a = 0.10
     dx, dy = -h * 0.004, h * 0.008
@@ -221,7 +250,9 @@ def render(fig, h, ox, oy):
             wL * 0.62, echo_a)
 
     # ======================================================= back hair
-    hair_back(out, fig, h)
+    hair_back(out, fig, h, hair_fill)
+    hair_bun(out, fig, h, hair_fill, fp)
+    hair_tail(out, fig, h, hair_fill)
 
     # =========================================================== legs
     for hip, knee, ankle, foot in ((fig["hip_l"], fig["knee_l"], fig["ankle_l"], fig["foot_l"]),
@@ -302,123 +333,107 @@ def render(fig, h, ox, oy):
     p.quad((hem_lx + hem_rx) * 0.5, hem_y - h * 0.004, hem_rx * 0.98, hem_y - h * 0.014)
     add(out, p, wF * 0.9, A_FOLD * 0.85)
 
-    # =============================================== torso + crop top
-    # Right side of the body: shoulder -> deltoid -> bust -> waist -> hip.
+    # =============================================== torso + zip jacket
+    # Right silhouette: shoulder -> deltoid -> side seam -> hip hem corner.
+    # The jacket hangs loose, so the side seam rides outside the body.
     p = P()
     p.move(*fig["shoulder_r"])
-    p.quad(chest_rx + rx * bust * 0.55, chest_ry + ry * bust * 0.35 + down_y * 0.012 * h,
-           chest_rx + rx * bust * 0.85, chest_ry + ry * bust * 0.80 + down_y * 0.026 * h)
-    p.quad(chest_rx + rx * bust, chest_ry + ry * bust + down_y * 0.034 * h, chest_rx, chest_ry)
-    p.quad(waist_rx - rx * 0.016 * h, waist_ry - 0.008 * h, waist_rx, waist_ry)
-    p.quad(fig["hip_r"][0] + rx * 0.012 * h, fig["hip_r"][1] - 0.048 * h, *fig["hip_r"])
+    p.quad(chest_rx + rx * bust * 0.60, chest_ry + ry * bust * 0.36 + down_y * 0.012 * h,
+           chest_rx + rx * (bust + 0.006 * h), chest_ry + ry * bust * 0.84 + down_y * 0.024 * h)
+    p.quad(chest_rx + rx * (bust + 0.008 * h), chest_ry + ry * bust + down_y * 0.032 * h,
+           chest_rx + rx * 0.010 * h, chest_ry)
+    p.quad(waist_rx + rx * 0.016 * h, waist_ry - 0.004 * h,
+           waist_rx + rx * 0.012 * h, waist_ry)
+    p.quad(fig["hip_r"][0] + rx * 0.014 * h, fig["hip_r"][1] - 0.048 * h,
+           fig["hip_r"][0] + rx * 0.004 * h, fig["hip_r"][1] - 0.002 * h)
     add(out, p, wC, A_CONTOUR, bloom=True, hot=True)
 
-    # Left side, mirrored.
+    # Left silhouette, mirrored.
     p = P()
     p.move(*fig["shoulder_l"])
-    p.quad(chest_lx - rx * bust * 0.55, chest_ly - ry * bust * 0.35 + down_y * 0.012 * h,
-           chest_lx - rx * bust * 0.85, chest_ly - ry * bust * 0.80 + down_y * 0.026 * h)
-    p.quad(chest_lx - rx * bust, chest_ly - ry * bust + down_y * 0.034 * h, chest_lx, chest_ly)
-    p.quad(waist_lx + rx * 0.016 * h, waist_ly - 0.008 * h, waist_lx, waist_ly)
-    p.quad(fig["hip_l"][0] - rx * 0.012 * h, fig["hip_l"][1] - 0.048 * h, *fig["hip_l"])
+    p.quad(chest_lx - rx * bust * 0.60, chest_ly - ry * bust * 0.36 + down_y * 0.012 * h,
+           chest_lx - rx * (bust + 0.006 * h), chest_ly - ry * bust * 0.84 + down_y * 0.024 * h)
+    p.quad(chest_lx - rx * (bust + 0.008 * h), chest_ly - ry * bust + down_y * 0.032 * h,
+           chest_lx - rx * 0.010 * h, chest_ly)
+    p.quad(waist_lx + rx * 0.016 * h, waist_ly - 0.004 * h,
+           waist_lx + rx * 0.012 * h, waist_ly)
+    p.quad(fig["hip_l"][0] - rx * 0.014 * h, fig["hip_l"][1] - 0.048 * h,
+           fig["hip_l"][0] - rx * 0.004 * h, fig["hip_l"][1] - 0.002 * h)
     add(out, p, wC, A_CONTOUR, bloom=True, hot=True)
 
-    # shoulder caps - the deltoid mass over each shoulder joint
+    # jacket hem: a shallow curve just above the skirt waistband
+    hem_jy = fig["hip_r"][1] - h * 0.052
+    p = P()
+    p.move(fig["hip_l"][0] + rx * 0.004 * h, fig["hip_l"][1] - h * 0.002)
+    p.quad(fig["chest"][0], hem_jy - h * 0.006,
+           fig["hip_r"][0] + rx * 0.004 * h, fig["hip_r"][1] - h * 0.002)
+    add(out, p, wF * 1.15, A_FOLD + 0.12)
+
+    # shoulder seams over the deltoid
     for sgn, shd in ((-1, fig["shoulder_l"]), (1, fig["shoulder_r"])):
         p = P()
-        p.move(fig["neck"][0] + sgn * r * 0.24, fig["neck"][1] + r * 0.06)
-        p.quad(shd[0] + sgn * r * 0.10, shd[1] - r * 0.32, shd[0] + sgn * r * 0.26, shd[1] + r * 0.18)
-        add(out, p, wS, A_STRUCT, bloom=True)
+        p.move(fig["neck"][0] + sgn * r * 0.26, fig["neck"][1] + r * 0.10)
+        p.quad(shd[0] + sgn * rx * sh * 0.42, shd[1] - r * 0.26,
+               shd[0] + sgn * rx * sh * 0.20, shd[1] + r * 0.16)
+        add(out, p, wS, A_STRUCT)
 
-    # collarbones
-    for sgn, shd in ((1, fig["shoulder_r"]), (-1, fig["shoulder_l"])):
-        p = P()
-        p.move(*fig["neck"])
-        p.quad((fig["neck"][0] + shd[0]) * 0.5, (fig["neck"][1] + shd[1]) * 0.5 + down_y * 0.010 * h, *shd)
-        add(out, p, wS * 0.8, A_STRUCT * 0.72)
-
-    # sternum - a light centre line from the neckline to the underbust
+    # collar band - the neck hole, a shallow U under the jaw
     p = P()
-    p.move(fig["chest"][0], fig["chest"][1] + down_y * 0.020 * h)
-    p.quad(fig["chest"][0], fig["chest"][1] + down_y * 0.040 * h,
-           fig["chest"][0], fig["chest"][1] + down_y * 0.054 * h)
-    add(out, p, wD, A_DETAIL + 0.06)
+    p.move(fig["neck"][0] - rx * r * 0.50, fig["neck"][1] - ry * r * 0.06)
+    p.quad(fig["neck"][0], fig["neck"][1] + down_y * r * 0.24,
+           fig["neck"][0] + rx * r * 0.50, fig["neck"][1] + ry * r * 0.06)
+    add(out, p, wF * 1.1, A_FOLD + 0.10)
 
-    # spine - two broken segments (断线)
-    p = P()
-    p.move(fig["chest"][0], fig["chest"][1] + down_y * 0.030 * h)
-    p.quad(fig["chest"][0], fig["chest"][1] + down_y * 0.085 * h, base_x, base_y - down_y * 0.012 * h)
-    add(out, p, wD, A_DETAIL + 0.06)
-    p = P()
-    p.move(base_x, base_y - down_y * 0.004 * h)
-    p.quad(waist_lx + (waist_rx - waist_lx) * 0.30, waist_ly + down_y * 0.006 * h,
-           waist_lx + (waist_rx - waist_lx) * 0.60, waist_ly + down_y * 0.002 * h)
-    add(out, p, wD, A_DETAIL)
-
-    # bust curve: one line under each bust
+    # collar lapels - folded triangles from the band down to the zipper top
+    zip_top_y = fig["chest"][1] + down_y * 0.034 * h
     for sgn in (-1, 1):
         p = P()
-        p.move(fig["chest"][0] + sgn * ch * 0.06, fig["chest"][1] + down_y * 0.030 * h)
-        p.quad(fig["chest"][0] + sgn * ch * 0.86, fig["chest"][1] + down_y * 0.058 * h,
-               fig["chest"][0] + sgn * ch * 1.00, fig["chest"][1] + down_y * 0.026 * h)
-        add(out, p, wS * 0.8, A_STRUCT * 0.8)
+        p.move(fig["neck"][0] + sgn * rx * r * 0.44, fig["neck"][1] + sgn * ry * r * 0.02)
+        p.quad(fig["chest"][0] + sgn * rx * ch * 0.34, fig["chest"][1] + down_y * 0.012 * h,
+               fig["chest"][0] + sgn * rx * ch * 0.12, zip_top_y)
+        add(out, p, wF * 1.2, A_FOLD + 0.14)
+        # fold line inside the lapel
+        p = P()
+        p.move(fig["neck"][0] + sgn * rx * r * 0.40, fig["neck"][1] + sgn * ry * r * 0.06)
+        p.quad(fig["chest"][0] + sgn * rx * ch * 0.40, fig["chest"][1] + down_y * 0.016 * h,
+               fig["chest"][0] + sgn * rx * ch * 0.17, zip_top_y + down_y * 0.004 * h)
+        add(out, p, wF * 0.8, A_FOLD * 0.85)
 
-    # iliac crest - the top of the pelvis, visible above the skirt waistband
+    # zipper: centre line down to the hem, with a pull at 40%
     p = P()
-    p.move(fig["hip_l"][0], fig["hip_l"][1] - h * 0.006)
-    p.quad(fig["pelvis"][0], fig["pelvis"][1] - h * 0.032, fig["hip_r"][0], fig["hip_r"][1] - h * 0.006)
-    add(out, p, wD, A_DETAIL + 0.08)
-
-    # navel
+    p.move(fig["chest"][0], zip_top_y)
+    p.line(fig["chest"][0], hem_jy - h * 0.004)
+    add(out, p, wS * 0.9, A_STRUCT + 0.06)
+    pull_y = zip_top_y + (hem_jy - zip_top_y) * 0.42
     p = P()
-    p.move(waist_lx, waist_ly)
-    p.quad(base_x, base_y + down_y * 0.016 * h, waist_rx, waist_ry)
-    add(out, p, wD, A_DETAIL + 0.14)
-
-    # --- the crop top: neckline, straps, side seams, hem, armpit folds
-
-    # neckline
+    p.move(fig["chest"][0] - rx * 0.010 * h, pull_y)
+    p.line(fig["chest"][0] + rx * 0.010 * h, pull_y)
+    add(out, p, wD * 1.6, A_DETAIL + 0.22)
     p = P()
-    p.move(fig["shoulder_l"][0] + rx * sh * 0.52, fig["shoulder_l"][1])
-    p.quad(fig["chest"][0] - rx * ch * 0.42, fig["chest"][1] + down_y * 0.004 * h,
-           fig["chest"][0], fig["chest"][1] + down_y * 0.020 * h)
-    p.quad(fig["chest"][0] + rx * ch * 0.42, fig["chest"][1] + down_y * 0.004 * h,
-           fig["shoulder_r"][0] - rx * sh * 0.52, fig["shoulder_r"][1])
-    add(out, p, wF, A_FOLD + 0.10)
+    p.move(fig["chest"][0] + rx * 0.008 * h, pull_y)
+    p.line(fig["chest"][0] + rx * 0.008 * h, pull_y + down_y * 0.016 * h)
+    add(out, p, wD * 1.4, A_DETAIL + 0.16)
 
-    # straps over the shoulders
+    # tension folds - two per side, running from the armhole toward the
+    # centre front (fabric bunches where the arm lifts)
     for sgn, shd in ((-1, fig["shoulder_l"]), (1, fig["shoulder_r"])):
         p = P()
-        p.move(shd[0] + sgn * rx * sh * 0.52, shd[1])
-        p.quad(shd[0] + sgn * rx * sh * 0.26, shd[1] - r * 0.24, shd[0] + sgn * rx * sh * 0.58, shd[1] - r * 0.04)
-        add(out, p, wF * 0.9, A_FOLD)
-
-    # side seams, ending just under the bust
-    for sgn in (-1, 1):
+        p.move(shd[0] + sgn * rx * sh * 0.66, shd[1] + down_y * 0.014 * h)
+        p.quad(fig["chest"][0] + sgn * rx * ch * 0.56, fig["chest"][1] + down_y * 0.040 * h,
+               fig["chest"][0] + sgn * rx * ch * 0.26, fig["chest"][1] + down_y * 0.062 * h)
+        add(out, p, wF, A_FOLD + 0.08)
         p = P()
-        p.move(fig["chest"][0] + sgn * ch * 0.92, fig["chest"][1] + down_y * 0.030 * h)
-        p.quad(fig["chest"][0] + sgn * ch * 1.02, fig["chest"][1] + down_y * 0.044 * h,
-               fig["chest"][0] + sgn * ch * 0.98, fig["chest"][1] + down_y * 0.058 * h)
-        add(out, p, wF, A_FOLD + 0.06)
-    # hem of the top
-    p = P()
-    p.move(fig["chest"][0] - ch * 0.98, fig["chest"][1] + down_y * 0.058 * h)
-    p.quad(fig["chest"][0], fig["chest"][1] + down_y * 0.068 * h,
-           fig["chest"][0] + ch * 0.98, fig["chest"][1] + down_y * 0.058 * h)
-    add(out, p, wF, A_FOLD + 0.08)
-
-    # armpit folds - two per side, heavy then light (衣纹朝关节集中)
-    for sgn, shd in ((-1, fig["shoulder_l"]), (1, fig["shoulder_r"])):
-        p = P()
-        p.move(shd[0] + sgn * sh * 0.70, shd[1] + down_y * 0.012 * h)
-        p.quad(fig["chest"][0] + sgn * ch * 0.60, fig["chest"][1] + down_y * 0.036 * h,
-               fig["chest"][0] + sgn * ch * 0.34, fig["chest"][1] + down_y * 0.056 * h)
-        add(out, p, wF, A_FOLD + 0.06)
-        p = P()
-        p.move(shd[0] + sgn * sh * 0.78, shd[1] + down_y * 0.020 * h)
-        p.quad(fig["chest"][0] + sgn * ch * 0.76, fig["chest"][1] + down_y * 0.046 * h,
-               fig["chest"][0] + sgn * ch * 0.54, fig["chest"][1] + down_y * 0.062 * h)
+        p.move(shd[0] + sgn * rx * sh * 0.76, shd[1] + down_y * 0.024 * h)
+        p.quad(fig["chest"][0] + sgn * rx * ch * 0.70, fig["chest"][1] + down_y * 0.052 * h,
+               fig["chest"][0] + sgn * rx * ch * 0.44, fig["chest"][1] + down_y * 0.080 * h)
         add(out, p, wF * 0.78, A_FOLD * 0.82)
+        # drape fold from the hem corner - the jacket flares over the hip
+        p = P()
+        p.move(fig["hip_l" if sgn < 0 else "hip_r"][0] + sgn * rx * 0.006 * h,
+               fig["hip_l" if sgn < 0 else "hip_r"][1] - down_y * 0.034 * h)
+        p.quad(fig["chest"][0] + sgn * rx * ch * 0.30, fig["chest"][1] + down_y * 0.10 * h,
+               fig["chest"][0] + sgn * rx * ch * 0.10, fig["chest"][1] + down_y * 0.135 * h)
+        add(out, p, wF * 0.85, A_FOLD * 0.9)
 
     # ========================================================= arms
     for shd, el, ha in ((fig["shoulder_l"], fig["elbow_l"], fig["hand_l"]),
@@ -427,6 +442,15 @@ def render(fig, h, ox, oy):
         bend = upper * 0.62
         add(out, edge_path(shd, el, ha, upper, fore, fore * 0.62, bend, 1), wL * 0.88, A_LIMB, bloom=True)
         add(out, edge_path(shd, el, ha, upper, fore, fore * 0.62, bend, -1), wL * 0.88, A_LIMB, bloom=True)
+        # sleeve hem across the upper arm (short sleeve over the deltoid)
+        sux, suy = unit(el[0] - shd[0], el[1] - shd[1])
+        snx, sny = -suy, sux
+        sx = shd[0] + (el[0] - shd[0]) * 0.52
+        sy = shd[1] + (el[1] - shd[1]) * 0.52
+        p = P()
+        p.move(sx + snx * upper * 1.02, sy + sny * upper * 1.02)
+        p.quad(sx, sy, sx - snx * upper * 1.02, sy - sny * upper * 1.02)
+        add(out, p, wF, A_FOLD + 0.10)
         # elbow: olecranon
         add(out, oval_path(el[0], el[1], fore * 0.90, fore * 0.90), wD * 1.4, A_DETAIL + 0.08)
         # hand: palm + finger crease
@@ -447,7 +471,6 @@ def render(fig, h, ox, oy):
 
     # ========================================================= head
     # A real cranium: crown -> temple -> brow -> cheekbone -> jaw -> chin.
-    # Still no facial features anywhere.
     p = P()
     p.move(hx, hy - r * 1.00)
     p.quad(hx + r * 0.99, hy - r * 0.90, hx + r * 0.90, hy - r * 0.50)
@@ -461,15 +484,88 @@ def render(fig, h, ox, oy):
     p.quad(hx - r * 1.00, hy - r * 0.16, hx - r * 0.90, hy - r * 0.50)
     p.quad(hx - r * 0.99, hy - r * 0.90, hx, hy - r * 1.00)
     p.close()
-    add(out, p, wC, A_CONTOUR, bloom=True, hot=True)
+    add(out, p, wC, A_CONTOUR, bloom=True, hot=True, fill=skin)
 
-    # neck: two converging lines from the jaw down to the sternum
+    # neck: two converging lines from the jaw down to the collar band
     for sgn in (-1, 1):
         p = P()
         p.move(hx + sgn * r * 0.34, hy + r * 0.92)
         p.quad(fig["neck"][0] + sgn * r * 0.46, fig["neck"][1] + r * 0.30,
-               fig["neck"][0] + sgn * r * 0.42, fig["neck"][1])
+               fig["neck"][0] + sgn * r * 0.44, fig["neck"][1] - ry * r * 0.02)
         add(out, p, wS * 0.60, A_STRUCT * 0.82)
+
+    # ---- the face (anime, rotates with the head) ----
+    for sgn in (1, -1):
+        ex, ey = sgn * 0.36, 0.04
+
+        # upper lash line - thick, flicked up at the outer corner
+        p = P()
+        p.move(*fp(ex - sgn * 0.135, ey + 0.012))
+        p.quad(*fp(ex, ey + 0.118), *fp(ex + sgn * 0.135, ey + 0.052))
+        add(out, p, wC * 0.40, A_CONTOUR)
+
+        # lower lid - thin
+        p = P()
+        p.move(*fp(ex + sgn * 0.125, ey + 0.018))
+        p.quad(*fp(ex, ey - 0.074), *fp(ex - sgn * 0.115, ey))
+        add(out, p, wD * 1.5, A_DETAIL + 0.20)
+
+        # iris + pupil + double highlight
+        ic = fp(ex, ey + 0.004)
+        add(out, oval_path(ic[0], ic[1], 0.088 * r, 0.092 * r), wD * 0.7,
+            A_DETAIL + 0.30, fill=IRIS)
+        pc = fp(ex - sgn * 0.012, ey + 0.0)
+        add(out, oval_path(pc[0], pc[1], 0.042 * r, 0.044 * r), wD * 0.5,
+            A_DETAIL + 0.30, fill=PUPIL)
+        h1 = fp(ex - sgn * 0.038, ey + 0.050)
+        add(out, oval_path(h1[0], h1[1], 0.030 * r, 0.030 * r), 0.0, 0.0, fill=SPARK)
+        h2 = fp(ex + sgn * 0.030, ey - 0.032)
+        add(out, oval_path(h2[0], h2[1], 0.016 * r, 0.016 * r), 0.0, 0.0, fill=SPARK_SOFT)
+
+        # eyebrow - thin natural arc
+        p = P()
+        p.move(*fp(ex - sgn * 0.155, ey + 0.265))
+        p.quad(*fp(ex, ey + 0.315), *fp(ex + sgn * 0.155, ey + 0.252))
+        add(out, p, wD * 1.4, A_DETAIL + 0.24)
+
+        # ear + stud
+        p = P()
+        p.move(*fp(sgn * 0.80, 0.16))
+        p.quad(*fp(sgn * 1.00, -0.02), *fp(sgn * 0.82, -0.18))
+        add(out, p, wD * 1.3, A_DETAIL + 0.12)
+        p = P()
+        p.move(*fp(sgn * 0.86, 0.09))
+        p.quad(*fp(sgn * 0.95, -0.02), *fp(sgn * 0.87, -0.11))
+        add(out, p, wD * 0.8, A_DETAIL)
+        st = fp(sgn * 0.88, -0.245)
+        add(out, oval_path(st[0], st[1], 0.024 * r, 0.024 * r), 0.0, 0.0, fill=SPARK)
+
+    # nose - a tiny side curve
+    p = P()
+    p.move(*fp(-0.028, -0.235))
+    p.quad(*fp(0.004, -0.300), *fp(0.034, -0.210))
+    add(out, p, wD * 1.2, A_DETAIL + 0.16)
+
+    # mouth - closed, faint smile
+    p = P()
+    p.move(*fp(-0.055, -0.495))
+    p.quad(*fp(0.0, -0.468), *fp(0.055, -0.495))
+    add(out, p, wD * 1.5, A_DETAIL + 0.30)
+    p = P()
+    p.move(*fp(-0.030, -0.545))
+    p.quad(*fp(0.0, -0.565), *fp(0.030, -0.545))
+    add(out, p, wD, A_DETAIL + 0.10)
+
+    # jaw shadow hatching - manga light from the upper left, so the shadow
+    # sits on the right jaw; three short strokes following the jaw line
+    for i in range(3):
+        t = i / 2.0
+        a = fp(0.14 + t * 0.20, -0.66 - t * 0.12)
+        b = fp(0.27 + t * 0.20, -0.79 - t * 0.12)
+        p = P()
+        p.move(*a)
+        p.line(*b)
+        add(out, p, wD * 1.1, A_DETAIL + 0.06)
 
     # ==================================================== front hair
     hair_bangs(out, fig, h)
@@ -480,22 +576,26 @@ def render(fig, h, ox, oy):
 
 
 # ------------------------------------------------------------------- hair
-def hair_back(out, fig, h):
-    """Teardrop mass behind the head + grouped inner flow lines."""
+def hair_back(out, fig, h, fill):
+    """Tied-up nape mass behind the head + grouped inner flow lines.
+
+    With the hair in a bun there is very little loose mass left: it hugs the
+    skull and ends at the nape, so the jaw and neck stay clean.
+    """
     r = fig["r"]
     hx, hy = fig["head"]
     base_off = fig["shoulder_half"]
-    bot_y = fig["pelvis"][1] + r * 2.6
+    bot_y = hy + r * 1.02
 
     p = P()
     p.move(hx - r * 1.00, hy - r * 0.34)
-    p.quad(hx - base_off * 1.02, hy + r * 1.30, hx - base_off * 0.55, bot_y)
-    p.quad(hx, bot_y + r * 0.55, hx + base_off * 0.55, bot_y)
-    p.quad(hx + base_off * 1.02, hy + r * 1.30, hx + r * 1.00, hy - r * 0.34)
-    p.quad(hx + r * 1.15, hy - r * 1.20, hx, hy - r * 1.30)
+    p.quad(hx - base_off * 0.62, hy + r * 0.72, hx - base_off * 0.34, bot_y)
+    p.quad(hx, bot_y + r * 0.22, hx + base_off * 0.34, bot_y)
+    p.quad(hx + base_off * 0.62, hy + r * 0.72, hx + r * 1.00, hy - r * 0.34)
+    p.quad(hx + r * 1.15, hy - r * 1.20, hx, hy - r * 1.28)
     p.quad(hx - r * 1.15, hy - r * 1.20, hx - r * 1.00, hy - r * 0.34)
     p.close()
-    add(out, p, W_STRUCT * 0.82, A_STRUCT * 0.70, bloom=True)
+    add(out, p, W_STRUCT * 0.82, A_STRUCT * 0.70, fill=fill)
 
     # inner flow lines, three per side, sweeping from the crown to the ends
     for sgn in (-1, 1):
@@ -503,47 +603,116 @@ def hair_back(out, fig, h):
             t = i / 2.0
             sx = hx + sgn * r * (0.55 - t * 0.25)
             sy = hy - r * (0.34 - t * 0.10)
-            ex = hx + sgn * base_off * (0.42 + t * 0.30)
-            ey = bot_y - r * (0.05 + t * 0.12)
-            mx = hx + sgn * base_off * (0.72 + t * 0.30)
-            my = hy + r * (1.15 + t * 0.35)
+            ex = hx + sgn * base_off * (0.28 + t * 0.20)
+            ey = bot_y - r * (0.02 + t * 0.06)
+            mx = hx + sgn * base_off * (0.50 + t * 0.20)
+            my = hy + r * (0.62 + t * 0.22)
             p = P()
             p.move(sx, sy)
             p.quad(mx, my, ex, ey)
             add(out, p, W_HAIR * (1 - t * 0.2), A_HAIR * (0.85 - t * 0.18))
 
 
+def hair_bun(out, fig, h, fill, fp):
+    """The tied bun at the crown with its band and swirl lines."""
+    r = fig["r"]
+    bc = fp(0.05, 1.06)
+    br = 0.38 * r
+    add(out, oval_path(bc[0], bc[1], br, br * 0.92), W_HAIR * 1.15, A_HAIR + 0.10, fill=fill)
+
+    # swirl lines inside the bun
+    for sgn in (1, -1):
+        p = P()
+        p.move(bc[0] - br * 0.55, bc[1] + sgn * br * 0.28)
+        p.quad(bc[0], bc[1] + sgn * br * 0.60, bc[0] + br * 0.55, bc[1] + sgn * br * 0.22)
+        add(out, p, W_HAIR * 0.72, A_HAIR * 0.62)
+
+    # tie band wrapping the base of the bun
+    p = P()
+    p.move(bc[0] - br * 0.70, bc[1] + br * 0.26)
+    p.quad(bc[0], bc[1] + br * 0.48, bc[0] + br * 0.72, bc[1] + br * 0.22)
+    add(out, p, W_HAIR * 1.3, A_HAIR + 0.16)
+    # band fold
+    p = P()
+    p.move(bc[0] - br * 0.60, bc[1] + br * 0.08)
+    p.quad(bc[0], bc[1] + br * 0.26, bc[0] + br * 0.62, bc[1] + br * 0.04)
+    add(out, p, W_HAIR * 0.8, A_HAIR * 0.7)
+
+
+def hair_tail(out, fig, h, fill):
+    """The ponytail tail: one clean S-sweep out to one side, tapered tip.
+
+    It emerges from under the bun and swings out past the shoulder - the
+    silhouette a dancer's hair makes mid-spin.
+    """
+    r = fig["r"]
+    hx, hy = fig["head"]
+    bc = (hx + 0.05 * r, hy - 1.06 * r)  # matches hair_bun's local (0.05, 1.06)
+    br = 0.38 * r
+
+    # root tucked under the bun's lower-left, tip swinging out and down
+    root_out = (bc[0] - br * 0.78, bc[1] + br * 0.30)
+    root_in = (bc[0] - br * 0.16, bc[1] + br * 0.60)
+    tip = (hx - r * 1.72, hy + r * 2.42)
+    p = P()
+    p.move(*root_out)
+    p.quad(hx - r * 1.80, hy + r * 0.90, *tip)
+    p.quad(hx - r * 0.82, hy + r * 1.92, *root_in)
+    p.close()
+    add(out, p, W_HAIR * 1.1, A_HAIR + 0.06, fill=fill)
+
+    # inner flow lines following the sweep
+    for i, t in enumerate((0.16, 0.52)):
+        p = P()
+        sx = lerp(root_out[0], root_in[0], t)
+        sy = lerp(root_out[1], root_in[1], t)
+        ex = tip[0] + (root_in[0] - tip[0]) * (0.30 + i * 0.22)
+        ey = tip[1] + (root_in[1] - tip[1]) * (0.30 + i * 0.22)
+        mx = hx - r * (1.42 + i * 0.22)
+        my = hy + r * (1.28 + i * 0.30)
+        p.move(sx, sy)
+        p.quad(mx, my, ex, ey)
+        add(out, p, W_HAIR * (0.78 - i * 0.10), A_HAIR * (0.60 - i * 0.08))
+
+
 def hair_bangs(out, fig, h):
-    """One grouped fringe across the forehead + a parting + separation lines."""
+    """Deep side-parted fringe, swept across the forehead, uneven lower edge."""
     r = fig["r"]
     hx, hy = fig["head"]
 
-    # side parting: the whole fringe sits off-centre, and the lower edge is
-    # deliberately uneven - a real fringe never mirrors.
-    po = -r * 0.16
+    po = -r * 0.10
     p = P()
     p.move(hx + po - r * 0.95, hy - r * 0.30)
-    p.quad(hx + po - r * 0.55, hy - r * 0.78, hx + po, hy - r * 0.84)
-    p.quad(hx + po + r * 0.55, hy - r * 0.78, hx + po + r * 0.95, hy - r * 0.30)
-    p.quad(hx + po + r * 0.70, hy + r * 0.22, hx + po + r * 0.45, hy + r * 0.10)
-    p.quad(hx + po + r * 0.22, hy + r * 0.26, hx + po, hy + r * 0.12)
-    p.quad(hx + po - r * 0.22, hy + r * 0.36, hx + po - r * 0.45, hy + r * 0.20)
-    p.quad(hx + po - r * 0.70, hy + r * 0.30, hx + po - r * 0.95, hy - r * 0.30)
+    p.quad(hx + po - r * 0.58, hy - r * 0.80, hx + po + r * 0.06, hy - r * 0.88)
+    p.quad(hx + po + r * 0.78, hy - r * 0.80, hx + po + r * 0.99, hy - r * 0.40)
+    p.quad(hx + po + r * 0.74, hy + r * 0.06, hx + po + r * 0.52, hy + r * 0.10)
+    p.quad(hx + po + r * 0.30, hy + r * 0.17, hx + po + r * 0.04, hy + r * 0.08)
+    p.quad(hx + po - r * 0.20, hy + r * 0.21, hx + po - r * 0.44, hy + r * 0.06)
+    p.quad(hx + po - r * 0.70, hy + r * 0.11, hx + po - r * 0.95, hy - r * 0.30)
     p.close()
     add(out, p, W_HAIR, A_HAIR)
 
     # parting running back from the crown through the fringe
     p = P()
-    p.move(hx + po, hy - r * 0.82)
+    p.move(hx + po, hy - r * 0.86)
     p.quad(hx + po + r * 0.10, hy - r * 0.40, hx + po + r * 0.06, hy + r * 0.06)
     add(out, p, W_HAIR * 0.72, A_HAIR * 0.62)
 
     # separation lines inside the mass, one per lock boundary
-    for sx in (hx + po - r * 0.45, hx + po + r * 0.45):
+    for sx in (hx + po - r * 0.42, hx + po + r * 0.46):
         p = P()
-        p.move(sx, hy - r * 0.58)
+        p.move(sx, hy - r * 0.56)
         p.quad(sx + (sx - hx - po) * 0.10, hy - r * 0.12, sx + (sx - hx - po) * 0.06, hy + r * 0.10)
         add(out, p, W_HAIR * 0.72, A_HAIR * 0.62)
+
+    # combing direction lines - one shallow arc per side of the parting,
+    # kept inside the fringe mass so they never cross the brow
+    for sgn in (-1, 1):
+        p = P()
+        p.move(hx + po - sgn * r * 0.40, hy - r * 0.56)
+        p.quad(hx + po + sgn * r * 0.14, hy - r * 0.70,
+               hx + po + sgn * r * 0.58, hy - r * (0.50 + (sgn > 0) * 0.08))
+        add(out, p, W_HAIR * 0.68, A_HAIR * 0.55)
 
     # temple hairlines - where the fringe meets the skin at the sides
     for sgn in (-1, 1):
@@ -554,20 +723,20 @@ def hair_bangs(out, fig, h):
 
 
 def hair_face_locks(out, fig, h):
-    """Two tapered locks framing the face."""
+    """Two tapered locks framing the face, running past the jaw."""
     r = fig["r"]
     hx, hy = fig["head"]
     for sgn in (-1, 1):
         p = P()
         p.move(hx + sgn * r * 0.96, hy - r * 0.62)
-        p.quad(hx + sgn * r * 1.24, hy + r * 0.30, hx + sgn * r * 0.92, hy + r * 1.30)
-        p.quad(hx + sgn * r * 0.74, hy + r * 0.40, hx + sgn * r * 0.72, hy - r * 0.20)
+        p.quad(hx + sgn * r * 1.26, hy + r * 0.42, hx + sgn * r * 0.94, hy + r * 1.46)
+        p.quad(hx + sgn * r * 0.74, hy + r * 0.44, hx + sgn * r * 0.72, hy - r * 0.20)
         p.quad(hx + sgn * r * 0.78, hy - r * 0.48, hx + sgn * r * 0.96, hy - r * 0.62)
         p.close()
         add(out, p, W_HAIR, A_HAIR * 0.9)
         p = P()
         p.move(hx + sgn * r * 0.98, hy - r * 0.50)
-        p.quad(hx + sgn * r * 1.10, hy + r * 0.35, hx + sgn * r * 0.86, hy + r * 1.16)
+        p.quad(hx + sgn * r * 1.12, hy + r * 0.40, hx + sgn * r * 0.88, hy + r * 1.30)
         add(out, p, W_HAIR * 0.7, A_HAIR * 0.55)
 
 
@@ -577,20 +746,20 @@ def hair_strands(out, fig, h, front):
     hx, hy = fig["head"]
     base_off = fig["shoulder_half"]
     top_y = hy - r * 0.40
-    bot_y = fig["pelvis"][1] + r * 2.6
-    count = 4 if front else 5
-    stagger = (0.00, 0.30, 0.55, 0.78, 0.40)
-    lean = (0.04, -0.05, 0.03, -0.06, 0.05)
+    bot_y = hy + r * 1.55
+    count = 3 if front else 4
+    stagger = (0.00, 0.42, 0.78)
+    lean = (0.04, -0.05, 0.03)
     # the right side of the head gets its own rhythm - real hair never mirrors
-    stagger_r = (0.12, 0.44, 0.68, 0.92, 0.52)
-    lean_r = (-0.06, 0.05, -0.04, 0.06, -0.05)
+    stagger_r = (0.16, 0.58, 0.90)
+    lean_r = (-0.06, 0.05, -0.04)
     for sgn in (-1, 1):
         stag, ln = (stagger, lean) if sgn < 0 else (stagger_r, lean_r)
         for i in range(count):
             t = i / (count - 1)
-            top_x = hx + sgn * (base_off * (0.60 + 0.30 * t) + r * 0.06)
-            mid_x = hx + sgn * (base_off * (0.92 + 0.20 * t) + r * 0.16) + sgn * ln[i] * r
-            end_x = hx + sgn * (base_off * (0.42 + 0.34 * t) + r * 0.10) + sgn * ln[i] * r * 1.7
+            top_x = hx + sgn * (base_off * (0.58 + 0.30 * t) + r * 0.06)
+            mid_x = hx + sgn * (base_off * (0.88 + 0.20 * t) + r * 0.16) + sgn * ln[i] * r
+            end_x = hx + sgn * (base_off * (0.40 + 0.32 * t) + r * 0.10) + sgn * ln[i] * r * 1.7
             end_y = bot_y - r * stag[i]
             p = P()
             p.move(top_x, top_y)
@@ -610,7 +779,12 @@ def main():
     shapes = render(fig, h, ox, oy)
 
     parts = []
-    for d, w, op, bloom, hot in shapes:
+    for d, w, op, bloom, hot, fill in shapes:
+        if fill is not None:
+            parts.append(
+                f'<path d="{d}" fill="rgba({fill[0]},{fill[1]},{fill[2]},{fill[3]:.2f})" '
+                f'stroke="none"/>'
+            )
         if bloom:
             parts.append(
                 f'<path d="{d}" fill="none" stroke="url(#neon)" stroke-width="{w * 2.9:.2f}" '
