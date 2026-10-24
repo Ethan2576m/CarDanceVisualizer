@@ -11,10 +11,9 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /**
- * The dancer looks. The first three are drawn procedurally by
- * [com.cardance.visualizer.render.DancerRenderer]; `RIBBON` and `HALFUP`
- * only exist to label portrait dancers (see [Dancer.portraitRes]) and
- * never reach the procedural renderer.
+ * The dancer hairstyles. All five are drawn procedurally by
+ * [com.cardance.visualizer.render.DancerRenderer] - none of them is a still
+ * image; every dancer is a live vector skeleton that moves with the music.
  */
 enum class HairStyle(val label: String) {
     STRAIGHT("长直发"),
@@ -22,6 +21,17 @@ enum class HairStyle(val label: String) {
     WAVES("大波浪"),
     RIBBON("蝴蝶结"),
     HALFUP("半扎发")
+}
+
+/**
+ * The lower garment. The skirt / dress / jeans are drawn procedurally by
+ * [com.cardance.visualizer.render.DancerRenderer] and share the same hips,
+ * knee and foot joints as the legs, so they bend and swing with the dance.
+ */
+enum class Outfit(val label: String) {
+    JEANS("牛仔裤"),
+    LONG_DRESS("及地长裙"),
+    SHORT_SKIRT("短裙")
 }
 
 /**
@@ -61,11 +71,10 @@ class Dancer(
     val allowOverflow: Boolean,
     val phase: Float,
     /**
-     * Drawable resource id of a full-body portrait. `0` (default) keeps the
-     * procedural skeleton rendering; a non-zero id draws that still image as
-     * the dancer, driven by the very same bounce / scale / special state.
+     * The lower garment. Drawn procedurally and shares the dancer's hip / knee
+     * / foot joints, so it bends and swings with every pose.
      */
-    val portraitRes: Int = 0
+    val outfit: Outfit = Outfit.SHORT_SKIRT
 ) {
 
     private var fromPose: Pose = DanceLibrary.POSES[0]

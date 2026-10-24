@@ -1,20 +1,16 @@
 package com.cardance.visualizer.render
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
-import android.graphics.RectF
 import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.Choreographer
 import android.view.View
-import com.cardance.visualizer.R
 import com.cardance.visualizer.audio.AudioTap
 import com.cardance.visualizer.audio.DemoRhythm
 import com.cardance.visualizer.audio.RawFrame
@@ -22,6 +18,7 @@ import com.cardance.visualizer.audio.Rhythm
 import com.cardance.visualizer.dance.DanceMode
 import com.cardance.visualizer.dance.Dancer
 import com.cardance.visualizer.dance.HairStyle
+import com.cardance.visualizer.dance.Outfit
 import com.cardance.visualizer.dance.SpecialPhase
 import com.cardance.visualizer.util.approach
 import com.cardance.visualizer.util.clamp01
@@ -52,12 +49,11 @@ import kotlin.random.Random
  * the idle single, and the next play session rolls a different face, so every
  * track feels like a new cast member walks on.
  *
- * The cast is a pool of full-body portrait dancers (see [Dancer.portraitRes]):
- * every one is drawn from a still image placed on the same stage metrics as a
- * procedural dancer would be - feet on the floor line, pelvis at the same
- * height - and gains life from the shared sway / bounce / scale / finishing
- * move state, so the random-pick, chorus hand-off and silence fallback all
- * behave exactly as before.
+ * The cast is a pool of **procedural** dancers (see [Dancer.style] /
+ * [Dancer.outfit]): each one is a live vector skeleton that bends, swings and
+ * bursts with the music, so the random-pick, chorus hand-off and silence
+ * fallback all behave exactly as before - only now the dancer is a real model
+ * moving, not a still image being rotated.
  */
 class StageView @JvmOverloads constructor(
     context: Context,
@@ -88,7 +84,7 @@ class StageView @JvmOverloads constructor(
             baseScale = 0.92f,
             allowOverflow = true,
             phase = 0.0f,
-            portraitRes = R.drawable.dancer_straight
+            outfit = Outfit.JEANS
         ),
         Dancer(
             style = HairStyle.WAVES,
@@ -97,7 +93,7 @@ class StageView @JvmOverloads constructor(
             baseScale = 0.98f,
             allowOverflow = false,
             phase = 1.9f,
-            portraitRes = R.drawable.dancer_waves
+            outfit = Outfit.LONG_DRESS
         ),
         Dancer(
             style = HairStyle.RIBBON,
@@ -106,7 +102,7 @@ class StageView @JvmOverloads constructor(
             baseScale = 0.98f,
             allowOverflow = false,
             phase = 3.7f,
-            portraitRes = R.drawable.dancer_ribbon
+            outfit = Outfit.SHORT_SKIRT
         ),
         Dancer(
             style = HairStyle.HALFUP,
@@ -115,28 +111,9 @@ class StageView @JvmOverloads constructor(
             baseScale = 0.92f,
             allowOverflow = true,
             phase = 5.4f,
-            portraitRes = R.drawable.dancer_halfup
+            outfit = Outfit.SHORT_SKIRT
         )
     )
-
-    /** Decoded full-body portraits, lazily filled on first draw. */
-    private val portraits = arrayOfNulls<Bitmap>(dancers.size)
-    private val portraitPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val portraitDst = RectF()
-
-    /** Decode (once) the portrait of dancer [i], or null for procedural ones. */
-    private fun portraitOf(i: Int): Bitmap? {
-        portraits[i]?.let { return it }
-        val res = dancers[i].portraitRes
-        if (res == 0) return null
-        val bmp = BitmapFactory.decodeResource(
-            resources,
-            res,
-            BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
-        )
-        portraits[i] = bmp
-        return bmp
-    }
 
     /** Screen placement of each dancer, needed by the special-effect layer. */
     private class Placement {
@@ -389,39 +366,7 @@ class StageView @JvmOverloads constructor(
         pl.pelvisY = pelvisY
         pl.figH = figH
 
-        val portrait = if (d.portraitRes != 0) portraitOf(i) else null
-        if (portrait != null) {
-            drawPortraitDancer(canvas, d, portrait, cx, pelvisY, figH)
-        } else {
-            renderer.draw(canvas, d, d.buildFigure(figH), cx, pelvisY, figH, timeSec)
-        }
-    }
-
-    /**
-     * Draw a still full-body portrait as the dancer. She shares the stage
-     * metrics of a procedural dancer (feet on the floor line) and the shared
-     * sway / bounce / dim state, so a portrait cast dances just as alive.
-     */
-    private fun drawPortraitDancer(
-        canvas: Canvas,
-        d: Dancer,
-        bmp: Bitmap,
-        cx: Float,
-        pelvisY: Float,
-        figH: Float
-    ) {
-        val feetY = pelvisY + FIGURE_BELOW * figH
-        val dh = figH
-        val dw = dh * bmp.width / bmp.height.toFloat()
-        portraitDst.set(cx - dw / 2f, feetY - dh, cx + dw / 2f, feetY)
-
-        val sway = sin(timeSec * 1.6f + d.phase) * 2.4f * (0.35f + d.energy * 0.65f)
-        portraitPaint.alpha = (255f * d.dim).toInt().coerceIn(0, 255)
-        val save = canvas.save()
-        canvas.rotate(sway, cx, feetY - dh * 0.5f)
-        canvas.drawBitmap(bmp, null, portraitDst, portraitPaint)
-        canvas.restoreToCount(save)
-        portraitPaint.alpha = 255
+        renderer.draw(canvas, d, d.buildFigure(figH), cx, pelvisY, figH, timeSec)
     }
 
     // ------------------------------------------------------------ special fx
@@ -549,10 +494,11 @@ class StageView @JvmOverloads constructor(
         canvas.drawText("$bpmText   ·   $modeText", pad, pad + 74f, textPaint)
 
         // 顶部右侧：台上舞者 —— 播放中为随机登场者，待机时为当前站立者
+        val cur = dancers[soloIndex]
         val soloText = if (soloMode) {
-            "登场 · ${dancers[soloIndex].style.label}"
+            "登场 · ${cur.style.label}·${cur.outfit.label}"
         } else {
-            "待机 · ${dancers[soloIndex].style.label}"
+            "待机 · ${cur.style.label}·${cur.outfit.label}"
         }
         val stw = strongTextPaint.measureText(soloText)
         canvas.drawText(soloText, w - stw - pad, pad + 34f, strongTextPaint)
