@@ -10,11 +10,18 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.random.Random
 
-/** The three silhouette looks, matching the approved design mockup. */
+/**
+ * The dancer looks. The first three are drawn procedurally by
+ * [com.cardance.visualizer.render.DancerRenderer]; `RIBBON` and `HALFUP`
+ * only exist to label portrait dancers (see [Dancer.portraitRes]) and
+ * never reach the procedural renderer.
+ */
 enum class HairStyle(val label: String) {
     STRAIGHT("长直发"),
     PONYTAIL("单马尾"),
-    WAVES("大波浪")
+    WAVES("大波浪"),
+    RIBBON("蝴蝶结"),
+    HALFUP("半扎发")
 }
 
 /**
@@ -52,7 +59,13 @@ class Dancer(
     val centerRatioX: Float,
     val baseScale: Float,
     val allowOverflow: Boolean,
-    val phase: Float
+    val phase: Float,
+    /**
+     * Drawable resource id of a full-body portrait. `0` (default) keeps the
+     * procedural skeleton rendering; a non-zero id draws that still image as
+     * the dancer, driven by the very same bounce / scale / special state.
+     */
+    val portraitRes: Int = 0
 ) {
 
     private var fromPose: Pose = DanceLibrary.POSES[0]

@@ -1,16 +1,20 @@
 package com.cardance.visualizer.render
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
+import android.graphics.RectF
 import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.Choreographer
 import android.view.View
+import com.cardance.visualizer.R
 import com.cardance.visualizer.audio.AudioTap
 import com.cardance.visualizer.audio.DemoRhythm
 import com.cardance.visualizer.audio.RawFrame
@@ -45,8 +49,15 @@ import kotlin.random.Random
  * **Solo stage**: the moment music is actually playing (demo rhythm, mixed
  * output, or a local track), a single randomly rolled dancer takes the stage -
  * centred, scaled up, dancing alone. Silence for a few seconds falls back to
- * the idle trio, and the next play session rolls a different face, so every
+ * the idle single, and the next play session rolls a different face, so every
  * track feels like a new cast member walks on.
+ *
+ * The cast is a pool of full-body portrait dancers (see [Dancer.portraitRes]):
+ * every one is drawn from a still image placed on the same stage metrics as a
+ * procedural dancer would be - feet on the floor line, pelvis at the same
+ * height - and gains life from the shared sway / bounce / scale / finishing
+ * move state, so the random-pick, chorus hand-off and silence fallback all
+ * behave exactly as before.
  */
 class StageView @JvmOverloads constructor(
     context: Context,
@@ -71,30 +82,61 @@ class StageView @JvmOverloads constructor(
 
     private val dancers = listOf(
         Dancer(
-            style = HairStyle.PONYTAIL,
-            color = Color.parseColor("#A855F7"),
-            centerRatioX = 0.145f,
-            baseScale = 0.90f,
-            allowOverflow = true,
-            phase = 0.0f
-        ),
-        Dancer(
             style = HairStyle.STRAIGHT,
             color = Color.parseColor("#22D3EE"),
-            centerRatioX = 0.500f,
-            baseScale = 1.00f,
-            allowOverflow = false,
-            phase = 1.9f
+            centerRatioX = 0.125f,
+            baseScale = 0.92f,
+            allowOverflow = true,
+            phase = 0.0f,
+            portraitRes = R.drawable.dancer_straight
         ),
         Dancer(
             style = HairStyle.WAVES,
             color = Color.parseColor("#EC4899"),
-            centerRatioX = 0.855f,
-            baseScale = 0.90f,
+            centerRatioX = 0.375f,
+            baseScale = 0.98f,
+            allowOverflow = false,
+            phase = 1.9f,
+            portraitRes = R.drawable.dancer_waves
+        ),
+        Dancer(
+            style = HairStyle.RIBBON,
+            color = Color.parseColor("#A855F7"),
+            centerRatioX = 0.625f,
+            baseScale = 0.98f,
+            allowOverflow = false,
+            phase = 3.7f,
+            portraitRes = R.drawable.dancer_ribbon
+        ),
+        Dancer(
+            style = HairStyle.HALFUP,
+            color = Color.parseColor("#F59E0B"),
+            centerRatioX = 0.875f,
+            baseScale = 0.92f,
             allowOverflow = true,
-            phase = 3.7f
+            phase = 5.4f,
+            portraitRes = R.drawable.dancer_halfup
         )
     )
+
+    /** Decoded full-body portraits, lazily filled on first draw. */
+    private val portraits = arrayOfNulls<Bitmap>(dancers.size)
+    private val portraitPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val portraitDst = RectF()
+
+    /** Decode (once) the portrait of dancer [i], or null for procedural ones. */
+    private fun portraitOf(i: Int): Bitmap? {
+        portraits[i]?.let { return it }
+        val res = dancers[i].portraitRes
+        if (res == 0) return null
+        val bmp = BitmapFactory.decodeResource(
+            resources,
+            res,
+            BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
+        )
+        portraits[i] = bmp
+        return bmp
+    }
 
     /** Screen placement of each dancer, needed by the special-effect layer. */
     private class Placement {
@@ -212,7 +254,7 @@ class StageView @JvmOverloads constructor(
         // ---- solo stage ------------------------------------------------------
         // "每次播放音乐，随机出现出来一个跳舞": the first live frame after a
         // silence rolls a new solo dancer; a few seconds of silence hands the
-        // stage back to the idle trio until the next play session.
+        // stage back to the idle single until the next play session.
         val tapLive = tapReady && audioTap.running && audioTap.silentSeconds < SOLO_SILENCE_SEC
         val audioActive = demoMode || tapLive
         if (audioActive && !soloMode) {
@@ -242,7 +284,8 @@ class StageView @JvmOverloads constructor(
 
         for (d in dancers) d.update(dt, rhythm, width.toFloat())
 
-        // While somebody is performing, the other two step back visually.
+        // While somebody is performing, the stage dims everything else. On the
+        // single-dancer stage that is only ever the performer herself.
         val anySpecial = dancers.any { it.special != SpecialPhase.NONE }
         for (d in dancers) {
             val target = if (!anySpecial || d.special != SpecialPhase.NONE) 1f else 0.40f
@@ -330,32 +373,55 @@ class StageView @JvmOverloads constructor(
         val availTop = h * 0.10f
         val availH = floorY - availTop
 
-        for (i in dancers.indices) {
-            // Solo stage: while music plays only the rolled dancer is on stage.
-            if (soloMode && i != soloIndex) continue
-            val d = dancers[i]
-            // She takes the centre and grows - the stage belongs to her alone,
-            // normalised so every hairstyle appears at the same solo scale.
-            val ratioX = if (soloMode) SOLO_CENTER_RATIO else d.centerRatioX
-            val scaleFix = if (soloMode) SOLO_BASE_SCALE / d.baseScale else 1f
-            val figH = (availH / FIGURE_RATIO) * d.scaleNow * scaleFix
-            val bounceLift = d.bounceRatio * figH
-            val cx = w * ratioX + if (soloMode) {
-                0f
-            } else {
-                (if (d.centerRatioX < 0.5f) -1f else 1f) * d.outwardShift
-            }
-            // Pelvis sits FIGURE_BELOW_ABOVE above the feet line.
-            val pelvisY = floorY - FIGURE_BELOW * figH - bounceLift
-            val fig = d.buildFigure(figH)
+        // Single-dancer stage: the rolled dancer owns the centre at all times -
+        // full solo scale while music plays, a calmer idle scale in silence.
+        val i = soloIndex
+        val d = dancers[i]
+        val scaleFix = (if (soloMode) SOLO_BASE_SCALE else IDLE_BASE_SCALE) / d.baseScale
+        val figH = (availH / FIGURE_RATIO) * d.scaleNow * scaleFix
+        val bounceLift = d.bounceRatio * figH
+        val cx = w * SOLO_CENTER_RATIO
+        // Pelvis sits FIGURE_BELOW above the feet line.
+        val pelvisY = floorY - FIGURE_BELOW * figH - bounceLift
 
-            val pl = placements[i]
-            pl.cx = cx
-            pl.pelvisY = pelvisY
-            pl.figH = figH
+        val pl = placements[i]
+        pl.cx = cx
+        pl.pelvisY = pelvisY
+        pl.figH = figH
 
-            renderer.draw(canvas, d, fig, cx, pelvisY, figH, timeSec)
+        val portrait = if (d.portraitRes != 0) portraitOf(i) else null
+        if (portrait != null) {
+            drawPortraitDancer(canvas, d, portrait, cx, pelvisY, figH)
+        } else {
+            renderer.draw(canvas, d, d.buildFigure(figH), cx, pelvisY, figH, timeSec)
         }
+    }
+
+    /**
+     * Draw a still full-body portrait as the dancer. She shares the stage
+     * metrics of a procedural dancer (feet on the floor line) and the shared
+     * sway / bounce / dim state, so a portrait cast dances just as alive.
+     */
+    private fun drawPortraitDancer(
+        canvas: Canvas,
+        d: Dancer,
+        bmp: Bitmap,
+        cx: Float,
+        pelvisY: Float,
+        figH: Float
+    ) {
+        val feetY = pelvisY + FIGURE_BELOW * figH
+        val dh = figH
+        val dw = dh * bmp.width / bmp.height.toFloat()
+        portraitDst.set(cx - dw / 2f, feetY - dh, cx + dw / 2f, feetY)
+
+        val sway = sin(timeSec * 1.6f + d.phase) * 2.4f * (0.35f + d.energy * 0.65f)
+        portraitPaint.alpha = (255f * d.dim).toInt().coerceIn(0, 255)
+        val save = canvas.save()
+        canvas.rotate(sway, cx, feetY - dh * 0.5f)
+        canvas.drawBitmap(bmp, null, portraitDst, portraitPaint)
+        canvas.restoreToCount(save)
+        portraitPaint.alpha = 255
     }
 
     // ------------------------------------------------------------ special fx
@@ -482,12 +548,14 @@ class StageView @JvmOverloads constructor(
         val modeText = if (demoMode) "演示" else danceMode.label
         canvas.drawText("$bpmText   ·   $modeText", pad, pad + 74f, textPaint)
 
-        // 顶部右侧：音乐播放时显示当前随机登场的舞者
-        if (soloMode) {
-            val soloText = "登场 · ${dancers[soloIndex].style.label}"
-            val stw = strongTextPaint.measureText(soloText)
-            canvas.drawText(soloText, w - stw - pad, pad + 34f, strongTextPaint)
+        // 顶部右侧：台上舞者 —— 播放中为随机登场者，待机时为当前站立者
+        val soloText = if (soloMode) {
+            "登场 · ${dancers[soloIndex].style.label}"
+        } else {
+            "待机 · ${dancers[soloIndex].style.label}"
         }
+        val stw = strongTextPaint.measureText(soloText)
+        canvas.drawText(soloText, w - stw - pad, pad + 34f, strongTextPaint)
 
         val performer = dancers[specialIndex]
         if (performer.special != SpecialPhase.NONE) {
@@ -554,7 +622,9 @@ class StageView @JvmOverloads constructor(
         private const val SOLO_CENTER_RATIO = 0.50f
         /** Base scale for the solo dancer, normalised across hairstyles. */
         private const val SOLO_BASE_SCALE = 1.06f
-        /** Seconds of silence before the stage falls back to the idle trio. */
+        /** Calmer scale for the same dancer while the stage is idle. */
+        private const val IDLE_BASE_SCALE = 0.92f
+        /** Seconds of silence before the stage falls back to the idle single. */
         private const val SOLO_SILENCE_SEC = 3L
     }
 }
