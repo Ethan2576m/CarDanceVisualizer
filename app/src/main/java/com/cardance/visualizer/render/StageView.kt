@@ -41,6 +41,12 @@ import kotlin.random.Random
  * radial light and a shockwave. **Only she grows** - the equaliser, the HUD and
  * the other two dancers stay exactly where they are, so the moment reads as
  * "the dancer powers up", not "the screen zooms in".
+ *
+ * **Solo stage**: the moment music is actually playing (demo rhythm, mixed
+ * output, or a local track), a single randomly rolled dancer takes the stage -
+ * centred, scaled up, dancing alone. Silence for a few seconds falls back to
+ * the idle trio, and the next play session rolls a different face, so every
+ * track feels like a new cast member walks on.
  */
 class StageView @JvmOverloads constructor(
     context: Context,
@@ -103,6 +109,15 @@ class StageView @JvmOverloads constructor(
     private var specialIndex = 1
     private var lastChorus = false
 
+    /**
+     * Index of the dancer currently on stage. While music plays she dances
+     * alone, centred; a new one is rolled every time playback starts.
+     */
+    private var soloIndex = 1
+
+    /** True while audio is live - only [soloIndex] is on stage. */
+    private var soloMode = false
+
     private var lastBeatSeen = 0L
     private var timeSec = 0f
     private var lastFrameNanos = 0L
@@ -157,6 +172,22 @@ class StageView @JvmOverloads constructor(
         Choreographer.getInstance().postFrameCallback(this)
     }
 
+    /**
+     * Roll the dancer for this play session. Never repeats the previous face
+     * twice in a row, so consecutive tracks always bring someone new on.
+     */
+    private fun rollSoloDancer() {
+        if (dancers.size <= 1) {
+            soloIndex = 0
+            return
+        }
+        var next = rnd.nextInt(dancers.size)
+        if (next == soloIndex) {
+            next = (next + 1 + rnd.nextInt(dancers.size - 1)) % dancers.size
+        }
+        soloIndex = next
+    }
+
     private fun step(dt: Float) {
         timeSec += dt
 
@@ -178,6 +209,19 @@ class StageView @JvmOverloads constructor(
         }
         lastRhythm = rhythm
 
+        // ---- solo stage ------------------------------------------------------
+        // "每次播放音乐，随机出现出来一个跳舞": the first live frame after a
+        // silence rolls a new solo dancer; a few seconds of silence hands the
+        // stage back to the idle trio until the next play session.
+        val tapLive = tapReady && audioTap.running && audioTap.silentSeconds < SOLO_SILENCE_SEC
+        val audioActive = demoMode || tapLive
+        if (audioActive && !soloMode) {
+            soloMode = true
+            rollSoloDancer()
+        } else if (!audioActive && soloMode) {
+            soloMode = false
+        }
+
         if (beatSource != lastBeatSeen) {
             val fresh = min((beatSource - lastBeatSeen).toInt(), 4)
             lastBeatSeen = beatSource
@@ -187,9 +231,11 @@ class StageView @JvmOverloads constructor(
         }
 
         // A chorus starts a finishing move. The performer rotates so every
-        // dancer gets a turn, starting with the one in the middle.
+        // dancer gets a turn, starting with the one in the middle. In solo
+        // mode the lone dancer on stage is always the performer - nobody
+        // else is visible to hand the move to.
         if (rhythm.chorus && !lastChorus) {
-            specialIndex = (specialIndex + 1) % dancers.size
+            specialIndex = if (soloMode) soloIndex else (specialIndex + 1) % dancers.size
             dancers[specialIndex].triggerSpecial()
         }
         lastChorus = rhythm.chorus
@@ -285,11 +331,20 @@ class StageView @JvmOverloads constructor(
         val availH = floorY - availTop
 
         for (i in dancers.indices) {
+            // Solo stage: while music plays only the rolled dancer is on stage.
+            if (soloMode && i != soloIndex) continue
             val d = dancers[i]
-            val figH = (availH / FIGURE_RATIO) * d.scaleNow
+            // She takes the centre and grows - the stage belongs to her alone,
+            // normalised so every hairstyle appears at the same solo scale.
+            val ratioX = if (soloMode) SOLO_CENTER_RATIO else d.centerRatioX
+            val scaleFix = if (soloMode) SOLO_BASE_SCALE / d.baseScale else 1f
+            val figH = (availH / FIGURE_RATIO) * d.scaleNow * scaleFix
             val bounceLift = d.bounceRatio * figH
-            val cx = w * d.centerRatioX +
+            val cx = w * ratioX + if (soloMode) {
+                0f
+            } else {
                 (if (d.centerRatioX < 0.5f) -1f else 1f) * d.outwardShift
+            }
             // Pelvis sits FIGURE_BELOW_ABOVE above the feet line.
             val pelvisY = floorY - FIGURE_BELOW * figH - bounceLift
             val fig = d.buildFigure(figH)
@@ -427,6 +482,13 @@ class StageView @JvmOverloads constructor(
         val modeText = if (demoMode) "演示" else danceMode.label
         canvas.drawText("$bpmText   ·   $modeText", pad, pad + 74f, textPaint)
 
+        // 顶部右侧：音乐播放时显示当前随机登场的舞者
+        if (soloMode) {
+            val soloText = "登场 · ${dancers[soloIndex].style.label}"
+            val stw = strongTextPaint.measureText(soloText)
+            canvas.drawText(soloText, w - stw - pad, pad + 34f, strongTextPaint)
+        }
+
         val performer = dancers[specialIndex]
         if (performer.special != SpecialPhase.NONE) {
             val label = when (performer.special) {
@@ -486,5 +548,13 @@ class StageView @JvmOverloads constructor(
         private const val FIGURE_RATIO = 0.937f
         private const val SILENCE_WARN_SECONDS = 4L
         private const val TWO_PI = 6.2831855f
+
+        // --- solo stage ------------------------------------------------------
+        /** Centred x-ratio for the solo dancer - she owns the middle. */
+        private const val SOLO_CENTER_RATIO = 0.50f
+        /** Base scale for the solo dancer, normalised across hairstyles. */
+        private const val SOLO_BASE_SCALE = 1.06f
+        /** Seconds of silence before the stage falls back to the idle trio. */
+        private const val SOLO_SILENCE_SEC = 3L
     }
 }
