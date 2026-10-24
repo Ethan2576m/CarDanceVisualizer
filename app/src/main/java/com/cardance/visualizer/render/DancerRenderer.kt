@@ -16,29 +16,27 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Draws one dancer as **sketch line art of a young woman**.
+ * Draws one dancer as **realistic figure, line-only rendering**.
  *
- * The drawing language follows 速写 (gesture sketch) conventions rather than
- * the earlier "anatomy lesson" revision:
+ * The medium stays neon line art on a black stage - no shading fills - but
+ * the body itself is drawn to read as a real young woman:
  *
- * - **no face at all** - the head carries only its outer contour, partly
- *   veiled by the hair; there are no eyes, brows, nose or lips;
- * - **contour lines** carry the silhouette and are the heaviest strokes;
- * - **structure lines** mark the anatomy underneath (collarbones, shoulder
- *   caps, a broken spine line, the bust curve);
- * - **fold lines** gather at the joints on the clothes - two from each
- *   armpit onto the crop top, pleats on the skirt alternating heavy/light;
- * - **hair is grouped**: one silhouette mass per section with internal flow
- *   lines along the growth direction, tips staggered so the ends never line
- *   up in a row.
+ * - proportions retuned to ~7 heads with realistic circumferences
+ *   (shoulder : chest : waist : hip = 1.06 : 1 : 0.70 : 1.08), so the
+ *   silhouette no longer reads as a stylised croquis;
+ * - the skull is a real cranium - crown, temple, brow, cheekbone, jaw angle,
+ *   chin - and carries **no facial features at all**;
+ * - anatomy lines mark what is underneath the skin: collarbones, sternum, a
+ *   broken spine, bust curves, the iliac crest, patella + popliteal crease,
+ *   ankle and wrist creases, a palm crease;
+ * - hair is grouped with a **side parting** that differs per dancer, an
+ *   uneven fringe edge and left/right strands on different rhythms - nothing
+ *   mirrors, because real hair never mirrors;
+ * - clothes separate tension (over the bust, over the hips) from drape (the
+ *   hem, the waistband).
  *
  * Line weight is a five-tier hierarchy (contour / limb / structure / fold /
- * hair / detail) so the picture has the 疏密 contrast a sketch lives on:
- * dense at the hair and the skirt, sparse on the bare midriff and limbs.
- *
- * The look is still neon: the drawing is carried by glowing contours on a
- * black stage. Bloom is faked with a wide low-alpha stroke under the
- * filament, because a hardware canvas ignores `setShadowLayer` on shapes.
+ * hair / detail) so the picture has the 疏密 contrast a sketch lives on.
  */
 class DancerRenderer {
 
@@ -63,14 +61,12 @@ class DancerRenderer {
     private var alphaScale = 1f
 
     // ------------------------------------------------------- line weights
-    // Fractions of the figure height. The hierarchy is the whole point:
-    // silhouette > limbs > anatomy > garment folds > hair > detail.
-    private val wContour = 0.0162f
-    private val wLimb = 0.0132f
-    private val wStruct = 0.0106f
-    private val wFold = 0.0070f
-    private val wHair = 0.0078f
-    private val wDetail = 0.0048f
+    private val wContour = 0.0160f
+    private val wLimb = 0.0130f
+    private val wStruct = 0.0104f
+    private val wFold = 0.0068f
+    private val wHair = 0.0074f
+    private val wDetail = 0.0046f
 
     private val aContour = 237
     private val aLimb = 224
@@ -111,11 +107,6 @@ class DancerRenderer {
 
     // ---------------------------------------------------------------- shader
 
-    /**
-     * A vertical neon sweep. The dancer's own hue sits in the middle of the
-     * ramp so each of the three keeps its identity, while the ramp still
-     * travels through cyan / magenta / gold like a light painting.
-     */
     private fun buildShader(dancer: Dancer, h: Float, timeSec: Float) {
         val base = dancer.color
         val colors = intArrayOf(
@@ -168,8 +159,7 @@ class DancerRenderer {
         canvas.drawPath(path, stroke)
     }
 
-    /** Detail tiers: a single crisp pass, no bloom - keeps folds and hair
-     *  reading as ink lines instead of everything glowing equally. */
+    /** Detail tiers: a single crisp pass, no bloom. */
     private fun line(canvas: Canvas, path: Path, w: Float, alpha: Int) {
         stroke.alpha = (alpha * alphaScale).toInt().coerceIn(0, 255)
         stroke.strokeWidth = w
@@ -198,11 +188,6 @@ class DancerRenderer {
 
     // ------------------------------------------------------------- geometry
 
-    /**
-     * One edge of a tapered limb. [a] - [b] - [c] are the joints, the widths
-     * are the half-widths at each joint, and [bend] pushes the middle of the
-     * curve outwards so the limb reads as flesh rather than as a stick.
-     */
     private fun edgePath(
         a: PointF,
         b: PointF,
@@ -276,56 +261,54 @@ class DancerRenderer {
         val wF = h * wFold
         val wD = h * wDetail
 
-        // Right side of the body: shoulder -> bust -> waist -> hip.
+        // Right side of the body: shoulder -> deltoid -> bust -> waist -> hip.
+        // Four segments, so the contour bulges over the deltoid before it
+        // sweeps into the bust instead of one straight dive.
         p.reset()
         p.moveTo(fig.shoulderR.x, fig.shoulderR.y)
         p.quadTo(
+            chestRx + rx * bust * 0.55f,
+            chestRy + ry * bust * 0.35f + downY * 0.012f * h,
+            chestRx + rx * bust * 0.85f,
+            chestRy + ry * bust * 0.80f + downY * 0.026f * h
+        )
+        p.quadTo(
             chestRx + rx * bust,
-            chestRy + ry * bust + downY * 0.030f * h,
+            chestRy + ry * bust + downY * 0.034f * h,
             chestRx, chestRy
         )
-        p.quadTo(
-            waistRx - rx * 0.014f * h,
-            waistRy - 0.006f * h,
-            waistRx, waistRy
-        )
-        p.quadTo(
-            fig.hipR.x + rx * 0.010f * h,
-            fig.hipR.y - 0.045f * h,
-            fig.hipR.x, fig.hipR.y
-        )
+        p.quadTo(waistRx - rx * 0.016f * h, waistRy - 0.008f * h, waistRx, waistRy)
+        p.quadTo(fig.hipR.x + rx * 0.012f * h, fig.hipR.y - 0.048f * h, fig.hipR.x, fig.hipR.y)
         contour(canvas, p, wC, aContour)
 
         // Left side, mirrored.
         p.reset()
         p.moveTo(fig.shoulderL.x, fig.shoulderL.y)
         p.quadTo(
+            chestLx - rx * bust * 0.55f,
+            chestLy - ry * bust * 0.35f + downY * 0.012f * h,
+            chestLx - rx * bust * 0.85f,
+            chestLy - ry * bust * 0.80f + downY * 0.026f * h
+        )
+        p.quadTo(
             chestLx - rx * bust,
-            chestLy - ry * bust + downY * 0.030f * h,
+            chestLy - ry * bust + downY * 0.034f * h,
             chestLx, chestLy
         )
-        p.quadTo(
-            waistLx + rx * 0.014f * h,
-            waistLy - 0.006f * h,
-            waistLx, waistLy
-        )
-        p.quadTo(
-            fig.hipL.x - rx * 0.010f * h,
-            fig.hipL.y - 0.045f * h,
-            fig.hipL.x, fig.hipL.y
-        )
+        p.quadTo(waistLx + rx * 0.016f * h, waistLy - 0.008f * h, waistLx, waistLy)
+        p.quadTo(fig.hipL.x - rx * 0.012f * h, fig.hipL.y - 0.048f * h, fig.hipL.x, fig.hipL.y)
         contour(canvas, p, wC, aContour)
 
         // Shoulder caps - the deltoid mass over each shoulder joint.
         for (sgn in intArrayOf(-1, 1)) {
             val shd = if (sgn < 0) fig.shoulderL else fig.shoulderR
             p.reset()
-            p.moveTo(fig.neck.x + sgn * fig.headRadius * 0.26f, fig.neck.y + fig.headRadius * 0.04f)
+            p.moveTo(fig.neck.x + sgn * fig.headRadius * 0.24f, fig.neck.y + fig.headRadius * 0.06f)
             p.quadTo(
-                shd.x + sgn * fig.headRadius * 0.12f,
-                shd.y - fig.headRadius * 0.30f,
-                shd.x + sgn * fig.headRadius * 0.24f,
-                shd.y + fig.headRadius * 0.16f
+                shd.x + sgn * fig.headRadius * 0.10f,
+                shd.y - fig.headRadius * 0.32f,
+                shd.x + sgn * fig.headRadius * 0.26f,
+                shd.y + fig.headRadius * 0.18f
             )
             structure(canvas, p, wS, aStruct)
         }
@@ -340,14 +323,25 @@ class DancerRenderer {
                 (fig.neck.y + shd.y) * 0.5f + downY * 0.010f * h,
                 shd.x, shd.y
             )
-            line(canvas, p, wS * 0.8f, (aStruct * 0.85f).toInt())
+            line(canvas, p, wS * 0.8f, (aStruct * 0.72f).toInt())
         }
+
+        // Sternum - a light centre line from the neckline to the underbust.
+        p.reset()
+        p.moveTo(fig.chest.x, fig.chest.y + downY * 0.020f * h)
+        p.quadTo(
+            fig.chest.x,
+            fig.chest.y + downY * 0.040f * h,
+            fig.chest.x,
+            fig.chest.y + downY * 0.054f * h
+        )
+        line(canvas, p, wD, aDetail + 16)
 
         // Spine - two broken segments (断线), lighter in the middle: 虚实.
         p.reset()
         p.moveTo(fig.chest.x, fig.chest.y + downY * 0.030f * h)
         p.quadTo(fig.chest.x, fig.chest.y + downY * 0.085f * h, baseX, baseY - downY * 0.012f * h)
-        line(canvas, p, wD, aDetail + 15)
+        line(canvas, p, wD, aDetail + 16)
         p.reset()
         p.moveTo(baseX, baseY - downY * 0.004f * h)
         p.quadTo(
@@ -371,11 +365,17 @@ class DancerRenderer {
             line(canvas, p, wS * 0.8f, (aStruct * 0.80f).toInt())
         }
 
+        // Iliac crest - the top of the pelvis, just above the skirt waistband.
+        p.reset()
+        p.moveTo(fig.hipL.x, fig.hipL.y - h * 0.006f)
+        p.quadTo(fig.pelvis.x, fig.pelvis.y - h * 0.032f, fig.hipR.x, fig.hipR.y - h * 0.006f)
+        line(canvas, p, wD, aDetail + 20)
+
         // Navel.
         p.reset()
         p.moveTo(waistLx, waistLy)
         p.quadTo(baseX, baseY + downY * 0.016f * h, waistRx, waistRy)
-        line(canvas, p, wD, aDetail + 20)
+        line(canvas, p, wD, aDetail + 36)
 
         // --- the crop top: neckline, straps, side seams, hem, armpit folds
 
@@ -401,7 +401,7 @@ class DancerRenderer {
             p.moveTo(shd.x + sgn * rx * shHalf * 0.52f, shd.y)
             p.quadTo(
                 shd.x + sgn * rx * shHalf * 0.26f,
-                shd.y - fig.headRadius * 0.22f,
+                shd.y - fig.headRadius * 0.24f,
                 shd.x + sgn * rx * shHalf * 0.58f,
                 shd.y - fig.headRadius * 0.04f
             )
@@ -487,9 +487,9 @@ class DancerRenderer {
         p.quadTo(fig.pelvis.x, fig.pelvis.y - h * 0.020f, rx * 1.02f, fig.hipR.y - h * 0.012f)
         structure(canvas, p, wS, aStruct)
 
-        // Pleats - 一疏一密: heavy/light/heavy/light/heavy, and the light
-        // ones stop short of the hem (取舍).
-        val pleats = floatArrayOf(0.12f, 0.32f, 0.50f, 0.68f, 0.88f)
+        // Pleats - heavy/light/heavy/light/heavy, the light ones stop short,
+        // and the control point dips so the fabric hangs under gravity.
+        val pleats = floatArrayOf(0.10f, 0.30f, 0.50f, 0.70f, 0.90f)
         val wmul = floatArrayOf(1.15f, 0.80f, 1.20f, 0.80f, 1.15f)
         val span = floatArrayOf(1.00f, 0.72f, 1.00f, 0.72f, 1.00f)
         val sy = fig.hipL.y + h * 0.012f
@@ -500,12 +500,12 @@ class DancerRenderer {
             val ey = hemY - h * 0.008f - (1f - span[i]) * (hemY - sy) * 0.92f
             p.reset()
             p.moveTo(sx, sy)
-            p.quadTo(sx * 1.28f, fig.pelvis.y + h * 0.070f, ex, ey)
+            p.quadTo(sx * 1.28f, fig.pelvis.y + h * 0.082f, ex, ey)
             val a = if (wmul[i] > 1f) (aFold * 1.05f).toInt() else (aFold * 0.82f).toInt()
             line(canvas, p, wF * wmul[i], a)
         }
 
-        // Hem inner line - fabric thickness, a second line above the scallops.
+        // Hem inner line - fabric thickness.
         p.reset()
         p.moveTo(hemLx * 0.98f, hemY - h * 0.014f)
         p.quadTo((hemLx + hemRx) * 0.5f, hemY - h * 0.004f, hemRx * 0.98f, hemY - h * 0.014f)
@@ -516,9 +516,9 @@ class DancerRenderer {
 
     private fun drawLegs(canvas: Canvas, fig: Figure, dancer: Dancer, h: Float) {
         val w = h * wLimb
-        val thigh = h * 0.0270f
-        val calf = h * 0.0185f
-        val ankle = h * 0.0105f
+        val thigh = h * 0.0300f
+        val calf = h * 0.0200f
+        val ankle = h * 0.0108f
 
         drawLeg(canvas, fig.hipL, fig.kneeL, fig.ankleL, fig.footL, w, thigh, calf, ankle, dancer)
         drawLeg(canvas, fig.hipR, fig.kneeR, fig.ankleR, fig.footR, w, thigh, calf, ankle, dancer)
@@ -537,22 +537,57 @@ class DancerRenderer {
         dancer: Dancer
     ) {
         // The ribbon runs all the way to the foot so nothing floats.
-        val bend = thigh * 0.40f * (1f + dancer.energy * 0.35f)
+        val bend = thigh * 0.42f * (1f + dancer.energy * 0.35f)
         structure(canvas, edgePath(hip, knee, foot, thigh, calf, ankleW, bend, 1f), w, aLimb)
         structure(canvas, edgePath(hip, knee, foot, thigh, calf, ankleW, bend, -1f), w, aLimb)
 
-        // Knee and ankle hinges.
-        line(canvas, ovalPath(knee.x, knee.y, calf * 0.92f, calf * 0.92f), w * 0.36f, aDetail + 26)
-        line(canvas, ovalPath(ankle.x, ankle.y, ankleW * 1.05f, ankleW * 1.05f), w * 0.36f, aDetail + 16)
+        // Knee: patella + the popliteal crease behind it.
+        val (kux, kuy) = unit(knee.x - hip.x, knee.y - hip.y)
+        val knx = -kuy
+        val kny = kux
+        line(
+            canvas,
+            ovalPath(
+                knee.x + kux * calf * 0.10f, knee.y + kuy * calf * 0.10f,
+                calf * 0.42f, calf * 0.54f
+            ),
+            w * 0.61f, aDetail + 36
+        )
+        p.reset()
+        p.moveTo(
+            knee.x - kux * calf * 0.28f + knx * calf * 0.40f,
+            knee.y - kuy * calf * 0.28f + kny * calf * 0.40f
+        )
+        p.quadTo(
+            knee.x - kux * calf * 0.46f,
+            knee.y - kuy * calf * 0.46f,
+            knee.x - kux * calf * 0.28f - knx * calf * 0.40f,
+            knee.y - kuy * calf * 0.28f - kny * calf * 0.40f
+        )
+        line(canvas, p, w * 0.36f, aDetail + 26)
 
-        // Shoe.
-        line(canvas, ovalPath(foot.x, foot.y, thigh * 0.50f, thigh * 0.62f), w * 0.74f, aStruct + 20)
+        // Ankle: a joint crease across.
+        val (aux, auy) = unit(ankle.x - knee.x, ankle.y - knee.y)
+        val anx = -auy
+        val any = aux
+        p.reset()
+        p.moveTo(ankle.x + anx * ankleW * 0.92f, ankle.y + any * ankleW * 0.92f)
+        p.lineTo(ankle.x - anx * ankleW * 0.92f, ankle.y - any * ankleW * 0.92f)
+        line(canvas, p, w * 0.36f, aDetail + 36)
+
+        // Shoe: a wedge with a toe crease.
+        line(canvas, ovalPath(foot.x, foot.y, thigh * 0.44f, thigh * 0.66f), w * 0.74f, aStruct + 16)
+        val (tux, tuy) = unit(foot.y - ankle.y, -(foot.x - ankle.x))
+        p.reset()
+        p.moveTo(foot.x - tux * thigh * 0.30f, foot.y + tuy * thigh * 0.52f)
+        p.lineTo(foot.x + tux * thigh * 0.30f, foot.y + tuy * thigh * 0.52f)
+        line(canvas, p, w * 0.36f, aDetail + 26)
     }
 
     private fun drawArms(canvas: Canvas, fig: Figure, dancer: Dancer, h: Float) {
         val w = h * wLimb * 0.88f
-        val upper = h * 0.0195f
-        val fore = h * 0.0118f
+        val upper = h * 0.0200f
+        val fore = h * 0.0120f
 
         drawArm(canvas, fig.shoulderL, fig.elbowL, fig.handL, w, upper, fore, dancer)
         drawArm(canvas, fig.shoulderR, fig.elbowR, fig.handR, w, upper, fore, dancer)
@@ -568,15 +603,21 @@ class DancerRenderer {
         fore: Float,
         dancer: Dancer
     ) {
-        val bend = upper * 0.60f * (1f + dancer.energy * 0.35f)
+        val bend = upper * 0.62f * (1f + dancer.energy * 0.35f)
         structure(canvas, edgePath(shoulder, elbow, hand, upper, fore, fore * 0.62f, bend, 1f), w, aLimb)
         structure(canvas, edgePath(shoulder, elbow, hand, upper, fore, fore * 0.62f, bend, -1f), w, aLimb)
 
-        // Elbow hinge and hand.
-        line(canvas, ovalPath(elbow.x, elbow.y, fore * 0.95f, fore * 0.95f), w * 0.42f, aDetail + 20)
-        line(canvas, ovalPath(hand.x, hand.y, upper * 0.56f, upper * 0.66f), w * 0.60f, aStruct + 16)
+        // Elbow: the olecranon.
+        line(canvas, ovalPath(elbow.x, elbow.y, fore * 0.90f, fore * 0.90f), w * 0.42f, aDetail + 20)
 
-        // Wrist line - separates the forearm from the hand.
+        // Hand: the palm plus a finger crease.
+        line(canvas, ovalPath(hand.x, hand.y, upper * 0.58f, upper * 0.68f), w * 0.60f, aStruct + 26)
+        p.reset()
+        p.moveTo(hand.x - upper * 0.42f, hand.y + upper * 0.16f)
+        p.quadTo(hand.x, hand.y + upper * 0.30f, hand.x + upper * 0.42f, hand.y + upper * 0.16f)
+        line(canvas, p, w * 0.42f, aDetail + 36)
+
+        // Wrist crease - separates the forearm from the hand.
         val (fx, fy) = unit(hand.x - elbow.x, hand.y - elbow.y)
         val nx = -fy
         val ny = fx
@@ -591,33 +632,42 @@ class DancerRenderer {
     // ----------------------------------------------------------------- head
 
     /**
-     * Outer contour only - there is deliberately no face anywhere: no eyes,
-     * brows, nose or lips. The hair veils the upper half of the head, so the
-     * featureless contour below reads as a sketch portrait.
+     * A real cranium - crown, temple, brow, cheekbone, jaw angle, chin - and
+     * **no facial features anywhere**. The hair veils the upper half, so the
+     * featureless contour below still reads as a portrait.
      */
     private fun drawHead(canvas: Canvas, fig: Figure, h: Float) {
         val r = fig.headRadius
         val w = h * wContour
-        val wS = h * wStruct * 0.62f
+        val wS = h * wStruct * 0.60f
         val hx = fig.head.x
         val hy = fig.head.y
 
-        // Neck: two converging lines from the base of the neck up to the jaw.
+        // Neck: two converging lines from the jaw down to the sternum.
         for (sgn in intArrayOf(-1, 1)) {
             p.reset()
-            p.moveTo(fig.neck.x + sgn * r * 0.42f, fig.neck.y)
-            p.quadTo(hx + sgn * r * 0.46f, hy + r * 0.92f, hx + sgn * r * 0.34f, hy + r * 0.74f)
+            p.moveTo(hx + sgn * r * 0.34f, hy + r * 0.92f)
+            p.quadTo(
+                fig.neck.x + sgn * r * 0.46f,
+                fig.neck.y + r * 0.30f,
+                fig.neck.x + sgn * r * 0.42f,
+                fig.neck.y
+            )
             line(canvas, p, wS, (aStruct * 0.82f).toInt())
         }
 
-        // Face: an oval that tapers into a soft chin.
         p.reset()
-        p.moveTo(hx - r * 0.86f, hy)
-        p.quadTo(hx - r * 0.95f, hy - r * 0.86f, hx, hy - r)
-        p.quadTo(hx + r * 0.95f, hy - r * 0.86f, hx + r * 0.86f, hy)
-        p.quadTo(hx + r * 0.80f, hy + r * 0.52f, hx + r * 0.30f, hy + r * 0.96f)
-        p.quadTo(hx, hy + r * 1.05f, hx - r * 0.30f, hy + r * 0.96f)
-        p.quadTo(hx - r * 0.80f, hy + r * 0.52f, hx - r * 0.86f, hy)
+        p.moveTo(hx, hy - r * 1.00f)
+        p.quadTo(hx + r * 0.99f, hy - r * 0.90f, hx + r * 0.90f, hy - r * 0.50f)
+        p.quadTo(hx + r * 1.00f, hy - r * 0.16f, hx + r * 0.96f, hy + r * 0.04f)
+        p.quadTo(hx + r * 0.92f, hy + r * 0.32f, hx + r * 0.80f, hy + r * 0.52f)
+        p.quadTo(hx + r * 0.66f, hy + r * 0.76f, hx + r * 0.54f, hy + r * 0.90f)
+        p.quadTo(hx + r * 0.36f, hy + r * 1.04f, hx + r * 0.12f, hy + r * 1.07f)
+        p.quadTo(hx - r * 0.36f, hy + r * 1.04f, hx - r * 0.54f, hy + r * 0.90f)
+        p.quadTo(hx - r * 0.66f, hy + r * 0.76f, hx - r * 0.80f, hy + r * 0.52f)
+        p.quadTo(hx - r * 0.92f, hy + r * 0.32f, hx - r * 0.96f, hy + r * 0.04f)
+        p.quadTo(hx - r * 1.00f, hy - r * 0.16f, hx - r * 0.90f, hy - r * 0.50f)
+        p.quadTo(hx - r * 0.99f, hy - r * 0.90f, hx, hy - r * 1.00f)
         p.close()
         contour(canvas, p, w, aContour)
     }
@@ -648,26 +698,29 @@ class DancerRenderer {
     ) {
         when (dancer.style) {
             HairStyle.STRAIGHT -> {
-                hairBangs(canvas, fig, h)
+                hairBangs(canvas, fig, dancer, h)
                 faceLocks(canvas, fig, h)
                 hairStrands(canvas, fig, dancer, h, timeSec, true)
             }
-            HairStyle.PONYTAIL -> sweptFringe(canvas, fig, h)
+            HairStyle.PONYTAIL -> sweptFringe(canvas, fig, dancer, h)
             HairStyle.WAVES -> {
-                hairBangs(canvas, fig, h)
+                hairBangs(canvas, fig, dancer, h)
                 faceLocks(canvas, fig, h)
             }
         }
     }
 
-    /** The teardrop of hair sitting behind the head - now arcing *over* the
-     *  skull so the crown carries volume instead of a bald cap. */
+    /**
+     * The teardrop of hair sitting behind the head.  It arcs *over* the skull
+     * so the crown carries volume instead of a bald cap, and it stays tight
+     * enough to read as a real hairstyle rather than a helmet.
+     */
     private fun hairMass(canvas: Canvas, fig: Figure, h: Float) {
         val r = fig.headRadius
         val hx = fig.head.x
         val hy = fig.head.y
         val baseOff = fig.shoulderHalf * 1.00f
-        val botY = fig.pelvis.y + r * 2.4f
+        val botY = fig.pelvis.y + r * 2.6f
         val wS = h * wStruct * 0.82f
         val wH = h * wHair
 
@@ -676,13 +729,13 @@ class DancerRenderer {
         p.quadTo(hx - baseOff * 1.02f, hy + r * 1.30f, hx - baseOff * 0.55f, botY)
         p.quadTo(hx, botY + r * 0.55f, hx + baseOff * 0.55f, botY)
         p.quadTo(hx + baseOff * 1.02f, hy + r * 1.30f, hx + r * 1.00f, hy - r * 0.34f)
-        p.quadTo(hx + r * 1.28f, hy - r * 1.34f, hx, hy - r * 1.46f)
-        p.quadTo(hx - r * 1.28f, hy - r * 1.34f, hx - r * 1.00f, hy - r * 0.34f)
+        p.quadTo(hx + r * 1.15f, hy - r * 1.20f, hx, hy - r * 1.30f)
+        p.quadTo(hx - r * 1.15f, hy - r * 1.20f, hx - r * 1.00f, hy - r * 0.34f)
         p.close()
         structure(canvas, p, wS, (aStruct * 0.70f).toInt())
 
         // Inner flow lines, three per side, sweeping from the crown to the
-        // ends - this is the "分组刻画" that makes hair read as hair.
+        // ends - the "分组刻画" that makes hair read as hair.
         for (sgn in intArrayOf(-1, 1)) {
             for (i in 0 until 3) {
                 val t = i / 2f
@@ -701,32 +754,54 @@ class DancerRenderer {
     }
 
     /**
-     * One grouped fringe across the forehead + internal separation lines.
-     * Sketch bangs are a single mass with a fringed lower edge, not four
-     * separate wedges - the lock divisions live *inside* the silhouette.
+     * One grouped fringe with a **side parting**.  The parting offset is
+     * derived from the dancer's phase, so the three dancers never part their
+     * hair the same way, and the lower edge of the fringe is deliberately
+     * uneven - a real fringe never mirrors.
      */
-    private fun hairBangs(canvas: Canvas, fig: Figure, h: Float) {
+    private fun hairBangs(canvas: Canvas, fig: Figure, dancer: Dancer, h: Float) {
         val r = fig.headRadius
         val hx = fig.head.x
         val hy = fig.head.y
         val wH = h * wHair
+        val po = sin(dancer.phase * 1.7f) * r * 0.18f
 
         p.reset()
-        p.moveTo(hx - r * 0.95f, hy - r * 0.30f)
-        p.quadTo(hx - r * 0.55f, hy - r * 0.78f, hx, hy - r * 0.84f)
-        p.quadTo(hx + r * 0.55f, hy - r * 0.78f, hx + r * 0.95f, hy - r * 0.30f)
-        p.quadTo(hx + r * 0.70f, hy + r * 0.18f, hx + r * 0.45f, hy + r * 0.10f)
-        p.quadTo(hx + r * 0.22f, hy + r * 0.30f, hx, hy + r * 0.16f)
-        p.quadTo(hx - r * 0.22f, hy + r * 0.28f, hx - r * 0.45f, hy + r * 0.10f)
-        p.quadTo(hx - r * 0.70f, hy + r * 0.20f, hx - r * 0.95f, hy - r * 0.30f)
+        p.moveTo(hx + po - r * 0.95f, hy - r * 0.30f)
+        p.quadTo(hx + po - r * 0.55f, hy - r * 0.78f, hx + po, hy - r * 0.84f)
+        p.quadTo(hx + po + r * 0.55f, hy - r * 0.78f, hx + po + r * 0.95f, hy - r * 0.30f)
+        p.quadTo(hx + po + r * 0.70f, hy + r * 0.22f, hx + po + r * 0.45f, hy + r * 0.10f)
+        p.quadTo(hx + po + r * 0.22f, hy + r * 0.26f, hx + po, hy + r * 0.12f)
+        p.quadTo(hx + po - r * 0.22f, hy + r * 0.36f, hx + po - r * 0.45f, hy + r * 0.20f)
+        p.quadTo(hx + po - r * 0.70f, hy + r * 0.30f, hx + po - r * 0.95f, hy - r * 0.30f)
         p.close()
         line(canvas, p, wH, aHair)
 
-        for (sx in floatArrayOf(hx - r * 0.45f, hx, hx + r * 0.45f)) {
+        // The parting running back from the crown through the fringe.
+        p.reset()
+        p.moveTo(hx + po, hy - r * 0.82f)
+        p.quadTo(hx + po + r * 0.10f, hy - r * 0.40f, hx + po + r * 0.06f, hy + r * 0.06f)
+        line(canvas, p, wH * 0.72f, (aHair * 0.62f).toInt())
+
+        // Separation lines inside the mass, one per lock boundary.
+        for (sx in floatArrayOf(hx + po - r * 0.45f, hx + po + r * 0.45f)) {
             p.reset()
             p.moveTo(sx, hy - r * 0.58f)
-            p.quadTo(sx + (sx - hx) * 0.10f, hy - r * 0.12f, sx + (sx - hx) * 0.06f, hy + r * 0.10f)
+            p.quadTo(
+                sx + (sx - hx - po) * 0.10f,
+                hy - r * 0.12f,
+                sx + (sx - hx - po) * 0.06f,
+                hy + r * 0.10f
+            )
             line(canvas, p, wH * 0.72f, (aHair * 0.62f).toInt())
+        }
+
+        // Temple hairlines - where the fringe meets the skin at the sides.
+        for (sgn in intArrayOf(-1, 1)) {
+            p.reset()
+            p.moveTo(hx + sgn * r * 0.86f, hy - r * 0.20f)
+            p.quadTo(hx + sgn * r * 0.97f, hy - r * 0.04f, hx + sgn * r * 0.90f, hy + r * 0.10f)
+            line(canvas, p, wH * 0.70f, (aHair * 0.55f).toInt())
         }
     }
 
@@ -752,7 +827,11 @@ class DancerRenderer {
         }
     }
 
-    /** Falling strands, tips staggered so the ends never line up in a row. */
+    /**
+     * Falling strands, tips staggered so the ends never line up in a row.
+     * The left and right sides run on **different** stagger/lean rhythms -
+     * mirrored hair is the fastest way to make a figure look drawn.
+     */
     private fun hairStrands(
         canvas: Canvas,
         fig: Figure,
@@ -763,15 +842,19 @@ class DancerRenderer {
     ) {
         val r = fig.headRadius
         val topY = fig.head.y - r * 0.40f
-        val botY = fig.pelvis.y + r * 2.4f
+        val botY = fig.pelvis.y + r * 2.6f
         val baseOff = fig.shoulderHalf * 1.00f
         val wH = h * wHair
         val amp = r * (0.13f + dancer.energy * 0.10f) * (1f + dancer.bounceRatio * 1.6f)
-        val count = if (front) 3 else 4
-        val stagger = floatArrayOf(0.00f, 0.34f, 0.62f, 0.26f)
-        val lean = floatArrayOf(0.04f, -0.05f, 0.03f, -0.06f)
+        val count = if (front) 4 else 5
+        val staggerL = floatArrayOf(0.00f, 0.30f, 0.55f, 0.78f, 0.40f)
+        val leanL = floatArrayOf(0.04f, -0.05f, 0.03f, -0.06f, 0.05f)
+        val staggerR = floatArrayOf(0.12f, 0.44f, 0.68f, 0.92f, 0.52f)
+        val leanR = floatArrayOf(-0.06f, 0.05f, -0.04f, 0.06f, -0.05f)
 
         for (sgn in intArrayOf(-1, 1)) {
+            val stagger = if (sgn < 0) staggerL else staggerR
+            val lean = if (sgn < 0) leanL else leanR
             for (i in 0 until count) {
                 val t = i.toFloat() / (count - 1)
                 val ph = dancer.phase + sgn * 0.65f + i * 0.83f
@@ -836,17 +919,18 @@ class DancerRenderer {
         }
     }
 
-    /** A swept fringe tied on one side. */
-    private fun sweptFringe(canvas: Canvas, fig: Figure, h: Float) {
+    /** A swept fringe tied on one side, parted off-centre. */
+    private fun sweptFringe(canvas: Canvas, fig: Figure, dancer: Dancer, h: Float) {
         val r = fig.headRadius
         val hx = fig.head.x
         val hy = fig.head.y
+        val po = sin(dancer.phase * 1.7f) * r * 0.18f
         p.reset()
-        p.moveTo(hx - r * 1.02f, hy - r * 0.16f)
-        p.quadTo(hx - r * 0.55f, hy - r * 1.02f, hx + r * 0.18f, hy - r * 0.92f)
-        p.quadTo(hx + r * 0.86f, hy - r * 0.80f, hx + r * 1.00f, hy - r * 0.10f)
-        p.quadTo(hx + r * 0.40f, hy - r * 0.42f, hx - r * 0.28f, hy - r * 0.20f)
-        p.quadTo(hx - r * 0.72f, hy - r * 0.06f, hx - r * 1.02f, hy - r * 0.16f)
+        p.moveTo(hx + po - r * 1.02f, hy - r * 0.16f)
+        p.quadTo(hx + po - r * 0.55f, hy - r * 1.02f, hx + po + r * 0.18f, hy - r * 0.92f)
+        p.quadTo(hx + po + r * 0.86f, hy - r * 0.80f, hx + po + r * 1.00f, hy - r * 0.10f)
+        p.quadTo(hx + po + r * 0.40f, hy - r * 0.42f, hx + po - r * 0.28f, hy - r * 0.20f)
+        p.quadTo(hx + po - r * 0.72f, hy - r * 0.06f, hx + po - r * 1.02f, hy - r * 0.16f)
         p.close()
         structure(canvas, p, h * wStruct * 0.9f, aStruct)
     }

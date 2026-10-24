@@ -68,8 +68,9 @@ data class Pose(
  * +y downward. Heights are derived from the requested figure height [h].
  *
  * The proportions follow a young woman's build rather than a generic stick
- * figure: small head, long legs, narrow shoulders, a defined waist and a
- * slightly wider hip - roughly 7.5 heads tall.
+ * figure: a small head, long legs, shoulders a touch wider than the chest, a
+ * strongly defined waist and hips just wider than the shoulders - roughly
+ * 7 heads tall, with shoulder : chest : waist : hip = 1.06 : 1 : 0.70 : 1.08.
  */
 data class Figure(
     val pelvis: PointF,
@@ -99,22 +100,23 @@ data class Figure(
 
 object Kinematics {
 
-    // Segment lengths as a fraction of total figure height.
-    private const val TORSO = 0.272f
+    // Segment lengths as a fraction of total figure height.  Retuned to ~7
+    // heads (was ~6.4, which read as a stylised croquis rather than a person).
+    private const val TORSO = 0.282f
     // Chest -> centre of the head. Long enough that a real neck shows between
     // the collarbones and the chin (about a quarter of a head height).
-    private const val NECK = 0.082f
-    private const val HEAD_R = 0.072f
+    private const val NECK = 0.078f
+    private const val HEAD_R = 0.067f
     private const val UPPER_ARM = 0.140f
     private const val FOREARM = 0.130f
-    private const val THIGH = 0.238f
-    private const val SHIN = 0.234f
-    private const val FOOT = 0.050f
-    private const val SHOULDER_HALF = 0.088f
+    private const val THIGH = 0.248f
+    private const val SHIN = 0.240f
+    private const val FOOT = 0.048f
+    private const val SHOULDER_HALF = 0.080f
     private const val CHEST_HALF = 0.076f
-    private const val HIP_HALF = 0.086f
+    private const val HIP_HALF = 0.082f
     // Narrower than both chest and hips -> a defined waist.
-    private const val WAIST_HALF = 0.058f
+    private const val WAIST_HALF = 0.053f
 
     fun point(from: PointF, length: Float, angleDeg: Float): PointF {
         val a = angleDeg * DEG_TO_RAD
