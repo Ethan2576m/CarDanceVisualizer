@@ -26,10 +26,14 @@ import kotlin.math.sqrt
  *   (shoulder : chest : waist : hip = 1.06 : 1 : 0.70 : 1.08), so the
  *   silhouette no longer reads as a stylised croquis;
  * - the skull is a real cranium - crown, temple, brow, cheekbone, jaw angle,
- *   chin - and carries **no facial features at all**;
- * - anatomy lines mark what is underneath the skin: collarbones, sternum, a
- *   broken spine, bust curves, the iliac crest, patella + popliteal crease,
- *   ankle and wrist creases, a palm crease;
+ *   chin - and now carries a clean anime portrait: eyes with an iris ring and
+ *   a white catch-light, thin brows, a small nose, soft lips and an ear. The
+ *   face is drawn on top of the hair so it always reads as a face, and it
+ *   rotates with the head tilt like the skull does;
+ * - the torso and limbs are a smooth silhouette plus clothing only - the old
+ *   anatomy-study lines (collarbones, sternum, broken spine, bust curve,
+ *   iliac crest, navel, and the knee / ankle / elbow / wrist joint creases)
+ *   are gone, so the figure reads as a dressed young woman, not a croquis;
  * - hair is grouped with a **side parting** that differs per dancer, an
  *   uneven fringe edge and left/right strands on different rhythms - nothing
  *   mirrors, because real hair never mirrors;
@@ -102,6 +106,7 @@ class DancerRenderer {
         drawArms(canvas, fig, dancer, h)
         drawHead(canvas, fig, h)
         drawHairFront(canvas, fig, dancer, h, timeSec)
+        drawFace(canvas, fig, h)
 
         canvas.restore()
     }
@@ -185,6 +190,17 @@ class DancerRenderer {
         p.quadTo(cx - rx * k, cy - ry, cx, cy - ry)
         p.close()
         return p
+    }
+
+    /** A small filled dot - eye catch-lights and ear studs. */
+    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    private fun dot(canvas: Canvas, x: Float, y: Float, rad: Float, alpha: Int) {
+        dotPaint.color = Color.WHITE
+        dotPaint.alpha = (alpha * alphaScale).toInt().coerceIn(0, 255)
+        canvas.drawCircle(x, y, rad, dotPaint)
     }
 
     // ------------------------------------------------------------- geometry
@@ -314,69 +330,11 @@ class DancerRenderer {
             structure(canvas, p, wS, aStruct)
         }
 
-        // Collarbones.
-        for (sgn in intArrayOf(1, -1)) {
-            val shd = if (sgn > 0) fig.shoulderR else fig.shoulderL
-            p.reset()
-            p.moveTo(fig.neck.x, fig.neck.y)
-            p.quadTo(
-                (fig.neck.x + shd.x) * 0.5f,
-                (fig.neck.y + shd.y) * 0.5f + downY * 0.010f * h,
-                shd.x, shd.y
-            )
-            line(canvas, p, wS * 0.8f, (aStruct * 0.72f).toInt())
-        }
+        // (collarbones / sternum / spine / bust curve / iliac crest / navel
+        //  removed in v8.1 - the smooth silhouette + clothing imply the body;
+        //  the figure now reads as a dressed young woman, not an anatomy study)
 
-        // Sternum - a light centre line from the neckline to the underbust.
-        p.reset()
-        p.moveTo(fig.chest.x, fig.chest.y + downY * 0.020f * h)
-        p.quadTo(
-            fig.chest.x,
-            fig.chest.y + downY * 0.040f * h,
-            fig.chest.x,
-            fig.chest.y + downY * 0.054f * h
-        )
-        line(canvas, p, wD, aDetail + 16)
-
-        // Spine - two broken segments (断线), lighter in the middle: 虚实.
-        p.reset()
-        p.moveTo(fig.chest.x, fig.chest.y + downY * 0.030f * h)
-        p.quadTo(fig.chest.x, fig.chest.y + downY * 0.085f * h, baseX, baseY - downY * 0.012f * h)
-        line(canvas, p, wD, aDetail + 16)
-        p.reset()
-        p.moveTo(baseX, baseY - downY * 0.004f * h)
-        p.quadTo(
-            waistLx + (waistRx - waistLx) * 0.30f,
-            waistLy + downY * 0.006f * h,
-            waistLx + (waistRx - waistLx) * 0.60f,
-            waistLy + downY * 0.002f * h
-        )
-        line(canvas, p, wD, aDetail)
-
-        // Bust curve: one line under each bust.
-        for (sgn in intArrayOf(-1, 1)) {
-            p.reset()
-            p.moveTo(fig.chest.x + sgn * ch * 0.06f, fig.chest.y + downY * 0.030f * h)
-            p.quadTo(
-                fig.chest.x + sgn * ch * 0.86f,
-                fig.chest.y + downY * 0.058f * h,
-                fig.chest.x + sgn * ch * 1.00f,
-                fig.chest.y + downY * 0.026f * h
-            )
-            line(canvas, p, wS * 0.8f, (aStruct * 0.80f).toInt())
-        }
-
-        // Iliac crest - the top of the pelvis, just above the skirt waistband.
-        p.reset()
-        p.moveTo(fig.hipL.x, fig.hipL.y - h * 0.006f)
-        p.quadTo(fig.pelvis.x, fig.pelvis.y - h * 0.032f, fig.hipR.x, fig.hipR.y - h * 0.006f)
-        line(canvas, p, wD, aDetail + 20)
-
-        // Navel.
-        p.reset()
-        p.moveTo(waistLx, waistLy)
-        p.quadTo(baseX, baseY + downY * 0.016f * h, waistRx, waistRy)
-        line(canvas, p, wD, aDetail + 36)
+        // Navel placeholder removed.
 
         // --- the crop top: neckline, straps, side seams, hem, armpit folds
 
@@ -679,40 +637,6 @@ class DancerRenderer {
             val bend = thigh * 0.42f * (1f + dancer.energy * 0.35f)
             structure(canvas, edgePath(hip, knee, foot, thigh, calf, ankleW, bend, 1f), w, aLimb)
             structure(canvas, edgePath(hip, knee, foot, thigh, calf, ankleW, bend, -1f), w, aLimb)
-
-            // Knee: patella + the popliteal crease behind it.
-            val (kux, kuy) = unit(knee.x - hip.x, knee.y - hip.y)
-            val knx = -kuy
-            val kny = kux
-            line(
-                canvas,
-                ovalPath(
-                    knee.x + kux * calf * 0.10f, knee.y + kuy * calf * 0.10f,
-                    calf * 0.42f, calf * 0.54f
-                ),
-                w * 0.61f, aDetail + 36
-            )
-            p.reset()
-            p.moveTo(
-                knee.x - kux * calf * 0.28f + knx * calf * 0.40f,
-                knee.y - kuy * calf * 0.28f + kny * calf * 0.40f
-            )
-            p.quadTo(
-                knee.x - kux * calf * 0.46f,
-                knee.y - kuy * calf * 0.46f,
-                knee.x - kux * calf * 0.28f - knx * calf * 0.40f,
-                knee.y - kuy * calf * 0.28f - kny * calf * 0.40f
-            )
-            line(canvas, p, w * 0.36f, aDetail + 26)
-
-            // Ankle: a joint crease across.
-            val (aux, auy) = unit(ankle.x - knee.x, ankle.y - knee.y)
-            val anx = -auy
-            val any = aux
-            p.reset()
-            p.moveTo(ankle.x + anx * ankleW * 0.92f, ankle.y + any * ankleW * 0.92f)
-            p.lineTo(ankle.x - anx * ankleW * 0.92f, ankle.y - any * ankleW * 0.92f)
-            line(canvas, p, w * 0.36f, aDetail + 36)
         }
 
         // Shoe: a wedge with a toe crease (always drawn - the foot peeks out
@@ -748,26 +672,13 @@ class DancerRenderer {
         structure(canvas, edgePath(shoulder, elbow, hand, upper, fore, fore * 0.62f, bend, 1f), w, aLimb)
         structure(canvas, edgePath(shoulder, elbow, hand, upper, fore, fore * 0.62f, bend, -1f), w, aLimb)
 
-        // Elbow: the olecranon.
-        line(canvas, ovalPath(elbow.x, elbow.y, fore * 0.90f, fore * 0.90f), w * 0.42f, aDetail + 20)
-
-        // Hand: the palm plus a finger crease.
+        // Hand: the palm plus a finger crease. Joint creases (elbow, wrist)
+        // are omitted so the arm reads smooth, not as an anatomical diagram.
         line(canvas, ovalPath(hand.x, hand.y, upper * 0.58f, upper * 0.68f), w * 0.60f, aStruct + 26)
         p.reset()
         p.moveTo(hand.x - upper * 0.42f, hand.y + upper * 0.16f)
         p.quadTo(hand.x, hand.y + upper * 0.30f, hand.x + upper * 0.42f, hand.y + upper * 0.16f)
         line(canvas, p, w * 0.42f, aDetail + 36)
-
-        // Wrist crease - separates the forearm from the hand.
-        val (fx, fy) = unit(hand.x - elbow.x, hand.y - elbow.y)
-        val nx = -fy
-        val ny = fx
-        val wx = elbow.x + (hand.x - elbow.x) * 0.82f
-        val wy = elbow.y + (hand.y - elbow.y) * 0.82f
-        p.reset()
-        p.moveTo(wx + nx * fore * 0.88f, wy + ny * fore * 0.88f)
-        p.lineTo(wx - nx * fore * 0.88f, wy - ny * fore * 0.88f)
-        line(canvas, p, w * 0.42f, aDetail + 26)
     }
 
     // ----------------------------------------------------------------- head
@@ -811,6 +722,85 @@ class DancerRenderer {
         p.quadTo(hx - r * 0.99f, hy - r * 0.90f, hx, hy - r * 1.00f)
         p.close()
         contour(canvas, p, w, aContour)
+    }
+
+    /**
+     * The face - a clean anime line portrait drawn **on top of the hair** so
+     * the features never get veiled by the fringe. A head-local (right, up)
+     * frame lets every feature rotate with the head tilt, the way the skull
+     * already does, instead of staying screen-fixed.
+     *
+     * No shading fills: a thick lash line, a thin lower lid, an iris ring and
+     * one white catch-light read as an eye; thin brows, a small nose, soft
+     * lips and an ear finish the portrait.
+     */
+    private fun drawFace(canvas: Canvas, fig: Figure, h: Float) {
+        val r = fig.headRadius
+        val wD = h * wDetail
+        val hx = fig.head.x
+        val hy = fig.head.y
+
+        // lx = right, ly = up, both in units of r; ly > 0 pushes toward the crown.
+        val (ux, uy) = unit(fig.head.x - fig.neck.x, fig.head.y - fig.neck.y)
+        val rx = -uy
+        val ry = ux
+        fun fp(lx: Float, ly: Float): PointF =
+            PointF(hx + (lx * rx + ly * ux) * r, hy + (lx * ry + ly * uy) * r)
+
+        for (sgn in intArrayOf(1, -1)) {
+            val ex = sgn * 0.36f
+            val ey = 0.04f
+
+            // Upper lash line - thick, flicked up at the outer corner.
+            var a = fp(ex - sgn * 0.135f, ey + 0.012f)
+            var b = fp(ex, ey + 0.118f)
+            var c = fp(ex + sgn * 0.135f, ey + 0.052f)
+            p.reset(); p.moveTo(a.x, a.y); p.quadTo(b.x, b.y, c.x, c.y)
+            line(canvas, p, wD * 2.6f, aContour + 18)
+
+            // Lower lid - thin.
+            a = fp(ex + sgn * 0.125f, ey + 0.018f)
+            b = fp(ex, ey - 0.074f)
+            c = fp(ex - sgn * 0.115f, ey)
+            p.reset(); p.moveTo(a.x, a.y); p.quadTo(b.x, b.y, c.x, c.y)
+            line(canvas, p, wD * 1.4f, aDetail + 24)
+
+            // Iris ring.
+            val ic = fp(ex, ey + 0.004f)
+            line(canvas, ovalPath(ic.x, ic.y, 0.090f * r, 0.094f * r), wD * 0.9f, aDetail + 34)
+
+            // Catch-light - a small white dot.
+            val hl = fp(ex - sgn * 0.040f, ey + 0.052f)
+            dot(canvas, hl.x, hl.y, 0.046f * r, aDetail + 70)
+
+            // Eyebrow - thin arc.
+            a = fp(ex - sgn * 0.155f, ey + 0.265f)
+            b = fp(ex, ey + 0.315f)
+            c = fp(ex + sgn * 0.155f, ey + 0.252f)
+            p.reset(); p.moveTo(a.x, a.y); p.quadTo(b.x, b.y, c.x, c.y)
+            line(canvas, p, wD * 1.5f, aDetail + 26)
+
+            // Ear.
+            a = fp(sgn * 0.80f, 0.16f)
+            b = fp(sgn * 1.00f, -0.02f)
+            c = fp(sgn * 0.82f, -0.18f)
+            p.reset(); p.moveTo(a.x, a.y); p.quadTo(b.x, b.y, c.x, c.y)
+            line(canvas, p, wD * 1.4f, aDetail + 14)
+        }
+
+        // Nose - a small side curve.
+        var a = fp(-0.028f, -0.235f)
+        var b = fp(0.004f, -0.300f)
+        var c = fp(0.034f, -0.210f)
+        p.reset(); p.moveTo(a.x, a.y); p.quadTo(b.x, b.y, c.x, c.y)
+        line(canvas, p, wD * 1.3f, aDetail + 18)
+
+        // Mouth - closed, faint smile.
+        a = fp(-0.055f, -0.495f)
+        b = fp(0.0f, -0.468f)
+        c = fp(0.055f, -0.495f)
+        p.reset(); p.moveTo(a.x, a.y); p.quadTo(b.x, b.y, c.x, c.y)
+        line(canvas, p, wD * 1.6f, aDetail + 34)
     }
 
     // ----------------------------------------------------------------- hair
